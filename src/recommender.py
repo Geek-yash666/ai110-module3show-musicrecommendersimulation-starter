@@ -70,6 +70,7 @@ class UserProfile:
     likes_acoustic: bool
     target_valence: float = 0.5
     target_danceability: float = 0.5
+    favorite_artist: str = ""
 
     @classmethod
     def from_seed_songs(cls, seed_songs: List[Song]) -> "UserProfile":
@@ -80,9 +81,11 @@ class UserProfile:
         if not seed_songs:
             raise ValueError("seed_songs list cannot be empty")
         
-        # Determine dominant genre and mood (mode/majority vote)
+        # Determine dominant genre, mood, and artist (mode/majority vote)
         top_genre = Counter([s.genre for s in seed_songs]).most_common(1)[0][0]
         top_mood = Counter([s.mood for s in seed_songs]).most_common(1)[0][0]
+        artists = [s.artist for s in seed_songs if s.artist and s.artist.lower() != "unknown artist"]
+        top_artist = Counter(artists).most_common(1)[0][0] if artists else ""
 
         # Calculate average audio features (centroid)
         avg_energy = sum(s.energy for s in seed_songs) / len(seed_songs)
@@ -96,7 +99,8 @@ class UserProfile:
             target_energy=avg_energy,
             likes_acoustic=avg_acoustic,
             target_valence=avg_valence,
-            target_danceability=avg_dance
+            target_danceability=avg_dance,
+            favorite_artist=top_artist
         )
 
 
@@ -186,10 +190,10 @@ def score_song(user_prefs: Union[Dict, UserProfile], song: Union[Dict, Song]) ->
 
     # 1.5 Artist Affinity Boost (+1.0 point max)
     s_artist = (song.artist if isinstance(song, Song) else str(song.get("artist", song.get("track_artists", "")))).lower()
-    pop_stars = ['shawn mendes', 'justin bieber', 'charlie puth', 'ed sheeran', 'taylor swift', 'the chainsmokers', 'jonas brothers', 'lauv', 'one direction', 'post malone', 'tate mcrae', 'rihanna', 'the weeknd']
-    if any(star in s_artist for star in pop_stars):
+    u_artist = (user_prefs.favorite_artist if isinstance(user_prefs, UserProfile) and hasattr(user_prefs, "favorite_artist") else str(user_prefs.get("favorite_artist", user_prefs.get("artist", "")))).lower()
+    if u_artist and u_artist != "unknown artist" and (u_artist in s_artist or s_artist in u_artist):
         score += 1.0
-        reasons.append(f"Featured Pop Star match (+1.0)")
+        reasons.append(f"Artist match: '{s_artist}' (+1.0)")
 
     # 2. Mood Match (+1.0 point max)
     if u_mood and s_mood:
@@ -209,7 +213,29 @@ def score_song(user_prefs: Union[Dict, UserProfile], song: Union[Dict, Song]) ->
         score += 0.5
         reasons.append(f"Acoustic preference match (+0.5)")
 
-    # 5. Popularity Boost Tie-breaker (+0.2 point max)
+    # 5. Valence, Danceability & Tempo Proximity (+0.5 point max)
+    if isinstance(song, Song):
+        s_valence = song.valence
+        s_dance = song.danceability
+        s_tempo = song.tempo_bpm
+    else:
+        s_valence = float(song.get("valence", 0.5) if song.get("valence") is not None else 0.5)
+        s_dance = float(song.get("danceability", 0.5) if song.get("danceability") is not None else 0.5)
+        s_tempo = float(song.get("tempo_bpm", song.get("tempo", 120.0)) if song.get("tempo_bpm", song.get("tempo")) is not None else 120.0)
+
+    if isinstance(user_prefs, UserProfile):
+        u_valence = user_prefs.target_valence
+        u_dance = user_prefs.target_danceability
+    else:
+        u_valence = float(user_prefs.get("target_valence", user_prefs.get("valence", 0.5)))
+        u_dance = float(user_prefs.get("target_danceability", user_prefs.get("danceability", 0.5)))
+
+    val_sim = max(0.0, 1.0 - abs(s_valence - u_valence))
+    dance_sim = max(0.0, 1.0 - abs(s_dance - u_dance))
+    score += (val_sim * 0.25) + (dance_sim * 0.25)
+    reasons.append(f"Valence ({s_valence:.2f}) & Danceability ({s_dance:.2f}) proximity (+{(val_sim * 0.25 + dance_sim * 0.25):.2f})")
+
+    # 6. Popularity Boost Tie-breaker (+0.2 point max)
     pop_sim = (s_popularity / 100.0) * 0.2
     score += pop_sim
     reasons.append(f"Popularity boost: {s_popularity:.1f}/100 (+{pop_sim:.2f})")
@@ -229,21 +255,15 @@ class Recommender:
         """
         Ranks songs for a user profile and returns the top k Song objects.
         """
-        scored_songs = []
-        for song in self.songs:
-            score, _ = score_song(user, song)
-            scored_songs.append((song, score))
-        
-        # Sort descending by score
-        scored_songs.sort(key=lambda item: item[1], reverse=True)
-        return [song for song, _ in scored_songs[:k]]
+        scored_songs = recommend_songs(user, self.songs, k=k)
+        return [song for song, _, _ in scored_songs]
 
     def explain_recommendation(self, user: UserProfile, song: Song) -> str:
         """
         Returns a formatted explanation string describing why a song was scored.
         """
         score, reasons = score_song(user, song)
-        return f"Score {score:.2f}/4.70 -> " + "; ".join(reasons)
+        return f"Score {score:.2f}/5.20 -> " + "; ".join(reasons)
 
     def recommend_from_seed(self, seed_songs: List[Song], k: int = 5) -> List[Tuple[Song, float, str]]:
         """
@@ -306,21 +326,54 @@ def load_songs(csv_path: str) -> List[Dict]:
     return songs
 
 
-def recommend_songs(user_prefs: Union[Dict, UserProfile], songs: List[Union[Dict, Song]], k: int = 5) -> List[Tuple[Union[Dict, Song], float, str]]:
+def recommend_songs(user_prefs: Union[Dict, UserProfile], songs: List[Union[Dict, Song]], k: int = 5, max_per_artist: int = 2) -> List[Tuple[Union[Dict, Song], float, str]]:
     """
     Functional implementation of the recommendation logic.
     Returns a list of tuples: (song, score, explanation_string)
     Required by src/main.py
     """
+    import re
+    def norm_t(title_str):
+        t = str(title_str).lower()
+        t = re.sub(r'\s*\(.*?\)', '', t)
+        t = re.sub(r'\s*\[.*?\]', '', t)
+        t = re.sub(r'\s*-\s*.*', '', t)
+        return t.strip()
+
     scored_items = []
+    seen_titles = set()
+    artist_counts = {}
+
+    all_scored = []
     for s in songs:
         score, reasons = score_song(user_prefs, s)
         explanation = "; ".join(reasons)
-        scored_items.append((s, score, explanation))
+        all_scored.append((s, score, explanation))
 
-    # Sort descending by score
-    scored_items.sort(key=lambda item: item[1], reverse=True)
-    return scored_items[:k]
+    all_scored.sort(key=lambda item: item[1], reverse=True)
+
+    for s, score, explanation in all_scored:
+        s_title = s.title if isinstance(s, Song) else s.get('title', s.get('name', ''))
+        s_artist = (s.artist if isinstance(s, Song) else str(s.get('artist', s.get('track_artists', '')))).strip().lower()
+
+        # Enforce max tracks per artist limit if max_per_artist > 0
+        if max_per_artist > 0 and s_artist and artist_counts.get(s_artist, 0) >= max_per_artist:
+            continue
+
+        nt = norm_t(s_title)
+        if nt and nt in seen_titles:
+            continue
+        if nt:
+            seen_titles.add(nt)
+
+        if s_artist:
+            artist_counts[s_artist] = artist_counts.get(s_artist, 0) + 1
+
+        scored_items.append((s, score, explanation))
+        if len(scored_items) == k:
+            break
+
+    return scored_items
 
 
 def score_parquet_tracks(parquet_path: str, user_prefs: Union[Dict, UserProfile], k: int = 5) -> List[Tuple[Dict, float, str]]:
