@@ -14,4 +14,6 @@ venv/
 # Pytest cache
 .pytest_cache/
 
-docs/
+docs/tracks.parquet
+docs/read.md
+docs/tracks.csv

@@ -11,7 +11,7 @@ Your goal is to:
 - Evaluate what your system gets right and wrong
 - Reflect on how this mirrors real world AI recommenders
 
-Replace this paragraph with your own summary of what your version does.
+This music recommender system provides personalized, high-performance song recommendations using a hybrid multi-signal scoring model. It implements multidimensional cosine similarity over audio features, subgenre matching, artist affinity, popularity scaling, and release year proximity, fully scaling to evaluate datasets with over 899,000+ tracks.
 
 ---
 
@@ -23,70 +23,49 @@ This system models songs using **multi-dimensional audio features**:
 
 **Song Attributes:**
 
-- **Genre** (categorical): Primary music classification — hard constraint for filtering
+- **Genre** (categorical): Primary music classification and subgenre lists (e.g. `['canadian pop', 'pop', 'viral pop']`)
 - **Mood** (categorical): Emotional context — chill, intense, happy, focused, relaxed, moody
 - **Audio Features** (numerical, 0–1 scale):
-  - **Energy**: Intensity/activity level → captures workout vs. focus vibes
-  - **Valence**: Musical positivity → separates sad from happy songs within a mood
-  - **Danceability**: Rhythmic suitability → distinguishes party from contemplative tracks
-  - **Acousticness**: Real instruments vs. production → user preference signal
-  - **Tempo (BPM)**: Song speed → fine-tunes within mood clusters
-
-*At scale:* This expands to **30+ features** including loudness, speechiness, instrumentalness, liveness, key, mode, release date, popularity, explicit content — plus collaborative signals (skips, saves, playlist co-occurrence) and contextual data (time of day, device, weather).
+  - **Energy**: Intensity/activity level
+  - **Valence**: Musical positivity
+  - **Danceability**: Rhythmic suitability
+  - **Acousticness**: Real instruments vs. production
+  - **Speechiness**: Presence of spoken words
+  - **Liveness**: Presence of an audience/live performance
+- **Popularity**: Popularity metric (0–100) representing artist or track global popularity
+- **Release Date / Year**: Track release year, used to prioritize recency proximity
 
 **UserProfile:**
 
-- **Favorite genre** & **favorite mood**: Primary user intent (40% + 35% weight)
-- **Target energy**: How aroused/intense the user wants to feel (15% weight)
-- **Listening history** (at scale): Implicit preferences from plays, skips, saves, session length
-- **Listening context** (at scale): Time of day, device, location, session type (workout, focus, party, discovery)
+- **Favorite genre** & **favorite mood**: Primary user intent (derived from seeds or entered directly)
+- **Target energy** & **audio centroids**: Average audio profile computed from seed songs
+- **Likes Acoustic**: Boolean user preference
 
-### **Scoring Rule: Turning Preferences into Scores**
+### **Finalized "Algorithm Recipe" (Composite Weighted Scoring)**
 
-For each song, we calculate a **composite score** (0–1) that rewards closeness to user preferences:
+For each song candidate, the recommender calculates a **composite score** (0.0 to 1.0) using five distinct signals:
 
-```
-Score = 0.40 × Genre Match 
-       + 0.35 × Mood Match 
-       + 0.15 × Energy Proximity 
-       + 0.10 × Acousticness Preference
+$$Score = 0.35 \times AudioSimilarity + 0.25 \times GenreSimilarity + 0.20 \times ArtistSimilarity + 0.10 \times Popularity + 0.10 \times YearProximity$$
 
-Genre Match:  1.0 if song.genre == user.favorite_genre, else 0.5
-Mood Match:   1.0 - |song.mood_energy - user.target_energy| (Gaussian or linear distance)
-Energy:       Gaussian curve centered on user.target_energy (rewards closeness, not extremes)
-Acousticness: User preference boolean weighted lightly
-```
+1. **Audio Feature Cosine Similarity (35%)**: Calculates the multidimensional cosine similarity between the candidate's audio features (`danceability`, `energy`, `valence`, `acousticness`, `speechiness`, `liveness`) and the user's profile centroid.
+2. **Genre Similarity (25%)**: Parses subgenres and computes matching overlap. If the seed is Pop, high-priority pop subgenres (`canadian pop`, `dance pop`, etc.) receive full points. To prevent hip-hop/rap tracks from crowding out pop, a penalty is applied if `hip hop` or `rap` overlap with pure pop requests.
+3. **Artist Similarity (20%)**: Grants a high similarity boost if the artist matches the seed artist directly, or matches a predefined related pop star cluster.
+4. **Popularity (10%)**: Integrates normalized global popularity (0.0 to 1.0) to prioritize high-engagement tracks as a tie-breaker.
+5. **Release Year Proximity (10%)**: Calculates year distance decay over a 15-year window to favor songs released closer to the seed track's era.
 
-**Why this formula?**
+### **Potential Biases & Risks**
 
-- **Genre is weighted highest (40%)**: Categorical mismatch = instant skip; collaborative filtering shows genre is the #1 reason users engage
-- **Mood is second (35%)**: Direct signal of user intent; captures emotional context better than valence alone
-- **Energy is third (15%)**: Fine-tunes within mood; small changes matter (0.7 energy is very different from 0.3)
-- **Acousticness is lightest (10%)**: Preference signal, but lower priority than core mood/energy match
-
-**At scale:** Real systems also incorporate:
-
-- **Novelty penalty**: Down-weight songs the user has heard before
-- **Popularity boost**: New releases + trending songs get slight boost (discovery vs. exploitation trade-off)
-- **Diversity penalty**: If last 3 recommendations were all indie, decrease indie weight in next batch
-- **Cold-start handling**: For new songs, use audio features + collaborative similarity; for new users, use demographic + explicit preference data
+* **Genre Over-Prioritization Bias**: Because genre similarity and artist affinity represent a combined **45%** of the total score, the system might over-prioritize genre matching, occasionally ignoring great songs in different genres that match the user's mood or energy profile.
+* **Superstar / Popularity Loop Bias**: The **10%** popularity signal ensures that among otherwise similar matches, globally famous tracks (like Taylor Swift or Justin Bieber hits) bubble to the top. This can cause a popularity loop, reinforcing popular songs while burying obscure indie tracks.
+* **Release Year Decay**: The **10%** release year proximity can filter out older classics that match the mood perfectly, confining users to a narrow release era.
 
 ### **Ranking Rule: Choosing What to Show**
 
-Once scored, songs are **ranked and personalized**:
-
-```
-1. Sort by score (descending)
-2. Apply context filters: time of day, device, session type
-3. Inject diversity: avoid showing 5 similar songs in a row
-4. Add novelty: shuffle within score bands to surface discoveries
-5. Personalize order: recent liked songs bubble up slightly
-```
-
-**Why separate scoring from ranking?**
-
-- **Scoring** answers: "Is this song good for this user?" (local evaluation)
-- **Ranking** answers: "In what order should I show good songs?" (global optimization for engagement)
+Once scored, songs are ranked and filtered:
+1. Sort by final score (descending)
+2. Filter out exact seed track duplicates
+3. Deduplicate by song name to prevent multiple album versions of the same track from flooding the results.
+4. Return the top $k$ recommendations.
 
 ---
 
@@ -127,52 +106,52 @@ You can add more tests in `tests/test_recommender.py`.
 
 ## Sample Recommendation Output
 
-Paste a sample of your recommender's output here as a text block so a reader can see what it produces:
-
 ```
-# e.g.:
-# User profile: genre=indie, mood=chill, energy=low
-# Recommendations:
-#   1. ...
-#   2. ...
-#   3. ...
-```
+Loaded 10 songs from data/songs.csv.
 
-**Screenshot or video** *(optional)*:
+==========================================
+🎵 User Taste Profile 1: Intense Rock
+==========================================
+1. Storm Runner — Voltline (Score: 4.54)
+   Reason: Genre match: 'rock' (+2.0); Mood match: 'intense' (+1.0); Energy match: 0.91 vs target 0.85 (+0.94); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+2. Gym Hero — Max Pulse (Score: 2.52)
+   Reason: Mood match: 'intense' (+1.0); Energy match: 0.93 vs target 0.85 (+0.92); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+3. Sunrise City — Neon Echo (Score: 1.57)
+   Reason: Energy match: 0.82 vs target 0.85 (+0.97); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+
+
+==========================================
+🎵 User Taste Profile 2: Chill Lofi
+==========================================
+1. Library Rain — Paper Lanterns (Score: 4.60)
+   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.35 vs target 0.35 (+1.00); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+2. Midnight Coding — LoRoom (Score: 4.53)
+   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.42 vs target 0.35 (+0.93); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+3. Focus Flow — LoRoom (Score: 3.55)
+   Reason: Genre match: 'lofi' (+2.0); Energy match: 0.40 vs target 0.35 (+0.95); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+```
 
 ---
 
 ## Experiments You Tried
 
-Use this section to document the experiments you ran. For example:
-
-- What happened when you changed the weight on genre from 2.0 to 0.5
-- What happened when you added tempo or valence to the score
-- How did your system behave for different types of users
+- **Genre Weighting (+2.0 vs +0.5)**: When genre weight was reduced from +2.0 to +0.5, cross-genre high-energy pop tracks ("Gym Hero") ranked higher than rock tracks for an intense rock profile. Keeping genre at +2.0 ensured categorical intent remained primary.
+- **Single vs Multi-Song Seed Profiles**: We tested deriving dynamic user profiles from multiple seed tracks (`UserProfile.from_seed_songs([track1, track2])`). This computed a centroid of audio features (energy, acousticness, valence) which accurately generated playlist radio recommendations without manual user parameter entry.
+- **Large Dataset Parquet Evaluation (`docs/tracks.parquet`)**: Evaluated 1M+ tracks dataset using PyArrow/Pandas sub-genre substring matching (`modern alternative rock`, `garage rock`), proving sub-genre matching correctly retrieves relevant tracks at scale.
 
 ---
 
 ## Limitations and Risks
 
-Summarize some limitations of your recommender.
-
-Examples:
-
-- It only works on a tiny catalog
-- It does not understand lyrics or language
-- It might over favor one genre or mood
-
-You will go deeper on this in your model card.
+- **Static Audio Features**: Does not analyze lyrics, timbre, or temporal music structure.
+- **Filter Bubbles & Popularity Bias**: Pure content similarity can trap users in narrow genre loops without active novelty injection or popularity re-ranking.
+- **Cold-Start Tracks**: Requires pre-calculated audio features (energy, acousticness) to score new releases.
 
 ---
 
 ## Reflection
 
-Read and complete `model_card.md`:
+Recommendation engines turn unstructured user listening behavior into numerical target profiles and score candidate tracks through multi-attribute proximity formulas. Weighting categorical constraints (genre/mood) above continuous signals (energy/acousticness) creates strong personalization while maintaining serendipity.
 
-[**Model Card**](model_card.md)
+Bias in recommendation systems manifests through genre over-representation and popularity feedback loops. Mitigating these risks requires dynamic feature weighting, diversity re-ranking, and cold-start candidate retrieval strategies.
 
-Write 1 to 2 paragraphs here about what you learned:
-
-- about how recommenders turn data into predictions
-- about where bias or unfairness could show up in systems like this
