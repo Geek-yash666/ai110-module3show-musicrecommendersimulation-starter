@@ -335,11 +335,19 @@ def score_parquet_tracks(parquet_path: str, user_prefs: Union[Dict, UserProfile]
         return []
 
     if not os.path.exists(parquet_path):
-        print(f"Parquet file {parquet_path} not found.")
-        return []
-
-    print(f"Loading parquet dataset from {parquet_path}...")
-    df = pd.read_parquet(parquet_path)
+        part1 = os.path.join(os.path.dirname(parquet_path), "tracks_part1.parquet")
+        part2 = os.path.join(os.path.dirname(parquet_path), "tracks_part2.parquet")
+        if os.path.exists(part1) and os.path.exists(part2):
+            print("Combining split parquet files (part1 & part2)...")
+            df1 = pd.read_parquet(part1)
+            df2 = pd.read_parquet(part2)
+            df = pd.concat([df1, df2])
+        else:
+            print(f"Parquet file {parquet_path} not found.")
+            return []
+    else:
+        print(f"Loading parquet dataset from {parquet_path}...")
+        df = pd.read_parquet(parquet_path)
     
     # Filter clean tracks and avoid seed track duplicate if matching profile exists
     # Sample up to 20,000 for better recommendation pool
