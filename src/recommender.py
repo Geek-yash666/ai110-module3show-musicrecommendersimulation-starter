@@ -392,10 +392,14 @@ class ProductionRecommender:
     """
 
     SCORING_PRESETS = {
-        # The prior balanced recipe is now named "similar" for a clearer CLI.
-        "similar": {"audio": 0.35, "popularity": 0.35, "genre": 0.15, "artist": 0.15},
-        # Popular mode intentionally excludes seed artists and uses one result per artist.
-        "popular": {"audio": 0.50, "popularity": 0.35, "genre": 0.15, "artist": 0.00},
+        # 1. "similar" (Balanced): Reduced popularity bias so tracks match sound and vibe first
+        "similar": {"audio": 0.40, "genre": 0.30, "artist": 0.15, "popularity": 0.15},
+
+        # 2. "vibe" (Strict / Deep Cuts): Ignores song popularity entirely to find true sonic matches
+        "vibe": {"audio": 0.50, "genre": 0.35, "artist": 0.15, "popularity": 0.00},
+
+        # 3. "popular" (Radio Hits): Keeps songs high-charting while maintaining baseline audio & genre fit
+        "popular": {"audio": 0.35, "popularity": 0.45, "genre": 0.20, "artist": 0.00},
     }
 
     AUDIO_FEATURES = [
@@ -407,9 +411,9 @@ class ProductionRecommender:
     # so "canadian pop" matches "dance pop" (both → "pop")
     BASE_GENRE_MAP = {
         'pop': 'pop', 'dance pop': 'pop', 'canadian pop': 'pop',
-        'viral pop': 'pop', 'electropop': 'pop', 'art pop': 'pop',
-        'indie pop': 'pop', 'synth-pop': 'pop', 'k-pop': 'pop',
-        'europop': 'pop', 'pop rock': 'pop', 'pop rap': 'pop',
+        'viral pop': 'pop', 'electropop': 'electro', 'art pop': 'pop',
+        'indie pop': 'pop', 'synth-pop': 'electro', 'k-pop': 'pop',
+        'europop': 'pop', 'pop rock': 'pop rock', 'pop rap': 'pop',
         'chamber pop': 'pop', 'dream pop': 'pop', 'power pop': 'pop',
         'neo mellow': 'pop', 'acoustic cover': 'pop',
         'rock': 'rock', 'alternative rock': 'rock', 'indie rock': 'rock',
@@ -469,10 +473,20 @@ class ProductionRecommender:
                 has_artist_df["genres"].astype(str) + "|" +
                 has_artist_df["artist_followers"].astype(str)
             )
-            # Build lookup: for each key, take the most common artist name
-            artist_lookup = has_artist_df.groupby("_artist_key")["track_artists"].agg(
-                lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else x.iloc[0]
-            )
+            # Build lookup: for each key, take the most common artist name, but only
+            # trust it when that name is a clear majority of the bucket. Degenerate
+            # keys (e.g. artist_popularity=0 + empty genres) collapse hundreds of
+            # unrelated artists together, so blindly taking the mode there mislabels
+            # every track sharing that key with whichever unrelated artist happens to
+            # be most common.
+            def resolve_bucket(names):
+                counts = names.value_counts()
+                winner, winner_count = counts.index[0], counts.iloc[0]
+                if len(names) <= 3 or (winner_count / len(names)) >= 0.5:
+                    return winner
+                return None
+
+            artist_lookup = has_artist_df.groupby("_artist_key")["track_artists"].agg(resolve_bucket)
 
             # Step 2: Apply lookup to tracks missing track_artists
             no_artist_mask = df["track_artists"].isna()
@@ -484,12 +498,13 @@ class ProductionRecommender:
             df.loc[no_artist_mask, "resolved_artist"] = (
                 df.loc[no_artist_mask, "_artist_key"].map(artist_lookup)
             )
-            # Fill any remaining nulls with album_name, then "Unknown Artist"
             df["resolved_artist"] = df["resolved_artist"].fillna(df["track_artists"])
-            df["resolved_artist"] = df["resolved_artist"].fillna(df["album_name"])
+            # Tracks that still can't be confidently resolved stay "Unknown Artist"
+            # rather than being mislabeled with the album name, which is sometimes a
+            # single-word/letter title (e.g. "D", "ME") that reads as a bogus artist.
             df["resolved_artist"] = df["resolved_artist"].fillna("Unknown Artist")
         else:
-            df["resolved_artist"] = df["track_artists"].fillna(df["album_name"]).fillna("Unknown Artist")
+            df["resolved_artist"] = df["track_artists"].fillna("Unknown Artist")
 
         df["resolved_artist"] = df["resolved_artist"].astype(str).str.strip()
         df.loc[df["resolved_artist"].str.lower().isin(["nan", "none", ""]), "resolved_artist"] = "Unknown Artist"
@@ -776,26 +791,34 @@ class ProductionRecommender:
             })
         return tracks
 
-    def recommend(self, seed_catalog_idx: int, k: int = 10, max_per_artist: int = 3,
-                  weights: Dict[str, float] = None,
+    def recommend(self, seed_catalog_idx: int, k: int = 15, max_per_artist: int = 3,
+                  max_per_other_artist: int = None, weights: Dict[str, float] = None,
                   exclude_seed_artists: bool = False,
                   cap_unknown_artists: bool = False) -> List[Dict]:
         """Generate recommendations from one selected catalog track."""
         return self.recommend_from_seeds(
             [seed_catalog_idx], k=k, max_per_artist=max_per_artist,
+            max_per_other_artist=max_per_other_artist,
             weights=weights,
             exclude_seed_artists=exclude_seed_artists,
             cap_unknown_artists=cap_unknown_artists,
         )
 
-    def recommend_from_seeds(self, seed_catalog_indices: List[int], k: int = 10,
-                             max_per_artist: int = 3, weights: Dict[str, float] = None,
+    def recommend_from_seeds(self, seed_catalog_indices: List[int], k: int = 15,
+                             max_per_artist: int = 3, max_per_other_artist: int = None,
+                             weights: Dict[str, float] = None,
                              exclude_seed_artists: bool = False,
                              cap_unknown_artists: bool = False) -> List[Dict]:
         """Generate playlist radio from one or more catalog tracks.
 
         Seed vectors are averaged into an 8D centroid. Genre and artist affinity
         are calculated against the union of the selected seed metadata.
+
+        max_per_artist caps tracks by the seed artist(s) themselves (deep cuts from
+        the artist you searched for). max_per_other_artist caps every other artist;
+        it defaults to max_per_artist when not given. Keeping it lower than
+        max_per_artist (e.g. 1) prevents a couple of genre-clique artists from
+        eating most of the result list and crowding out variety.
         """
         import re
 
@@ -857,7 +880,13 @@ class ProductionRecommender:
         for i, candidate_genres in enumerate(self.df["genre_set"]):
             candidate_base = base_genres(candidate_genres)
             if seed_base_genres & candidate_base:
-                genre_sims[i] = min(1.0, 1.0 + min(len(seed_genres & candidate_genres) * 0.1, 0.2))
+                # Base-genre bucket match is a floor (0.55); the rest is earned by how
+                # many exact subgenre tags the candidate shares with the seed, so a
+                # same-bucket-but-unrelated subgenre (e.g. reggaeton vs. synth-pop,
+                # both -> "pop") doesn't score identically to a close subgenre match.
+                union = seed_genres | candidate_genres
+                jaccard = len(seed_genres & candidate_genres) / len(union) if union else 0.0
+                genre_sims[i] = 0.55 + 0.45 * jaccard
 
         artist_values = self.df["artist_lower"].values
         artist_sims = np.isin(artist_values, list(seed_artists)).astype(np.float64)
@@ -889,6 +918,7 @@ class ProductionRecommender:
         seen_keys = set(seed_keys)
         artist_counts = {}
         results = []
+        other_artist_cap = max_per_artist if max_per_other_artist is None else max_per_other_artist
 
         def add_result(index):
             row = self.df.iloc[int(index)]
@@ -899,7 +929,8 @@ class ProductionRecommender:
             if exclude_seed_artists and artist in seed_artists:
                 return False
             should_cap_artist = artist != "unknown artist" or cap_unknown_artists
-            if max_per_artist > 0 and should_cap_artist and artist_counts.get(artist, 0) >= max_per_artist:
+            artist_cap = max_per_artist if artist in seed_artists else other_artist_cap
+            if artist_cap > 0 and should_cap_artist and artist_counts.get(artist, 0) >= artist_cap:
                 return False
             seen_keys.add(key)
             if should_cap_artist:

@@ -134,6 +134,10 @@ The `src/recommender.py` file is divided into **two distinct architectural track
   * **Data Structures:** The Prototype track instantiates individual Python objects (`Song`, `UserProfile`) and handles lists of dictionaries, which is slow but highly transparent. The Production track aggregates all song values into a single 2D NumPy matrix (`self.audio_matrix`), making calculations extremely fast.
   * **Scoring Arithmetic:** The Prototype track uses an additive point-based scoring model (maximum score of `5.2` points), making it easy to explain using text strings. The Production track uses continuous vector multiplication to calculate normalized percentage relevance values (0.0% to 100.0%) for easy sorting.
   * **Fuzzy Parsing:** The Production track features a two-pass fuzzy search engine (using `rapidfuzz` and database-level popularity sorting) to resolve misspelled input queries, which is omitted in the lightweight Prototype track.
+  * **Configurable Presets:**
+    * **`similar` (Balanced):** `audio: 40%`, `genre: 30%`, `artist: 15%`, `popularity: 15%` — reduces popularity bias to prioritize sound and vibe.
+    * **`vibe` (Deep Cuts):** `audio: 50%`, `genre: 35%`, `artist: 15%`, `popularity: 0%` — ignores track popularity to find pure acoustic matches.
+    * **`popular` (Radio Hits):** `audio: 35%`, `popularity: 45%`, `genre: 20%`, `artist: 0%` — prioritizes chart-topping hit singles while maintaining audio fit.
 
 ---
 
