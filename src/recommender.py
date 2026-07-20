@@ -393,13 +393,16 @@ class ProductionRecommender:
 
     SCORING_PRESETS = {
         # 1. "similar" (Balanced): Reduced popularity bias so tracks match sound and vibe first
-        "similar": {"audio": 0.40, "genre": 0.30, "artist": 0.15, "popularity": 0.15},
+        "similar": {"audio": 0.40, "genre": 0.30, "artist": 0.15, "popularity": 0.15, "era": 0.0},
 
         # 2. "vibe" (Strict / Deep Cuts): Ignores song popularity entirely to find true sonic matches
-        "vibe": {"audio": 0.50, "genre": 0.35, "artist": 0.15, "popularity": 0.00},
+        "vibe": {"audio": 0.50, "genre": 0.35, "artist": 0.15, "popularity": 0.00, "era": 0.0},
 
         # 3. "popular" (Radio Hits): Keeps songs high-charting while maintaining baseline audio & genre fit
-        "popular": {"audio": 0.35, "popularity": 0.45, "genre": 0.20, "artist": 0.00},
+        "popular": {"audio": 0.35, "popularity": 0.45, "genre": 0.20, "artist": 0.00, "era": 0.0},
+
+        # 4. "discover" (Era & Popularity): Prioritizes tracks from the same era and genre, minimizing audio
+        "discover": {"audio": 0.05, "genre": 0.35, "popularity": 0.30, "era": 0.30, "artist": 0.00},
     }
 
     AUDIO_FEATURES = [
@@ -916,15 +919,25 @@ class ProductionRecommender:
             if artist_sims[i] == 0 and any(seed in str(artist) or str(artist) in seed for seed in seed_artists):
                 artist_sims[i] = 0.5
 
+        seed_years = seed_rows["release_year"].dropna().astype(float).values
+        if len(seed_years) > 0:
+            seed_year = np.mean(seed_years)
+            candidate_years = self.df["release_year"].fillna(seed_year).astype(float).values
+            year_diffs = np.abs(candidate_years - seed_year)
+            era_sims = np.clip(1.0 - (year_diffs / 10.0), 0, 1)
+        else:
+            era_sims = np.zeros(len(self.df), dtype=np.float64)
+
         pop_scores = (
             self.df["norm_track_popularity"].values.astype(np.float64) * 0.75 +
             self.df["norm_artist_popularity"].values.astype(np.float64) * 0.25
         )
         contributions = {
-            "audio": selected_weights["audio"] * audio_sims,
-            "popularity": selected_weights["popularity"] * pop_scores,
-            "genre": selected_weights["genre"] * genre_sims,
-            "artist": selected_weights["artist"] * artist_sims,
+            "audio": selected_weights.get("audio", 0) * audio_sims,
+            "popularity": selected_weights.get("popularity", 0) * pop_scores,
+            "genre": selected_weights.get("genre", 0) * genre_sims,
+            "artist": selected_weights.get("artist", 0) * artist_sims,
+            "era": selected_weights.get("era", 0) * era_sims,
         }
         final_scores = sum(contributions.values())
 
@@ -964,6 +977,8 @@ class ProductionRecommender:
                 f"Genre {genre_sims[int(index)]:.2f} ({breakdown['genre']:.2f}); "
                 f"Artist {artist_sims[int(index)]:.2f} ({breakdown['artist']:.2f})"
             )
+            if 'era' in breakdown and breakdown['era'] > 0:
+                explanation += f"; Era {era_sims[int(index)]:.2f} ({breakdown['era']:.2f})"
             results.append({
                 "name": str(row["resolved_name"]), "artist": str(row["resolved_artist"]),
                 "album": str(row.get("album_name", "")), "score": float(final_scores[int(index)]),

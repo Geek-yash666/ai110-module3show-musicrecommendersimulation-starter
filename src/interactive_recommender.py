@@ -119,7 +119,7 @@ def get_user_input(prompt):
 
 def get_recommendation_settings():
     """Collect the requested ranking mode from the user."""
-    mode = get_user_input("Mode: similar, vibe, or popular [similar]: ").strip().lower() or "similar"
+    mode = get_user_input("Mode: similar, vibe, popular, or discover [similar]: ").strip().lower() or "similar"
     if mode not in ProductionRecommender.SCORING_PRESETS:
         print(f"  {styled('Unknown mode; using similar.', Colors.YELLOW)}")
         mode = "similar"
@@ -335,8 +335,8 @@ def main():
         print(f"\n  {styled('⏳ Computing recommendations...', Colors.DIM)}", flush=True)
 
         recs = recommender.recommend_from_seeds(
-            seed_indices, k=15, max_per_artist=1 if mode == "popular" else 3,
-            max_per_other_artist=1,
+            seed_indices, k=15, max_per_artist=1,
+            max_per_other_artist=2,
             weights=ProductionRecommender.SCORING_PRESETS[mode],
             exclude_seed_artists=mode == "popular",
             cap_unknown_artists=mode == "popular",

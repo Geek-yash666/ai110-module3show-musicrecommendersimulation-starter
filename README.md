@@ -51,7 +51,7 @@ $$
 3. **Genre Similarity (15%)**: Maps subgenres (e.g. `canadian pop`, `dance pop`) to base categories (`pop`). Sharing a base category awards full points, with a bonus for exact subgenre overlaps.
 4. **Artist Affinity (15%)**: Boosts tracks by the same artist as the seed.
 
-The interactive CLI offers `similar` and `popular` presets. Playlist radio accepts multiple searched seed tracks, averages their 8D vectors into a centroid, and combines their genre and artist metadata. Popular mode excludes the seed artists and returns at most one result per artist.
+The interactive CLI offers `similar`, `vibe`, `popular`, and `discover` presets. Playlist radio accepts multiple searched seed tracks, averages their 8D vectors into a centroid, and combines their genre and artist metadata. Popular mode excludes the seed artists and returns at most one result per artist.
 
 ### **Potential Biases & Risks**
 
@@ -135,9 +135,10 @@ The `src/recommender.py` file is divided into **two distinct architectural track
   * **Scoring Arithmetic:** The Prototype track uses an additive point-based scoring model (maximum score of `5.2` points), making it easy to explain using text strings. The Production track uses continuous vector multiplication to calculate normalized percentage relevance values (0.0% to 100.0%) for easy sorting.
   * **Fuzzy Parsing:** The Production track features a two-pass fuzzy search engine (using `rapidfuzz` and database-level popularity sorting) to resolve misspelled input queries, which is omitted in the lightweight Prototype track.
   * **Configurable Presets:**
-    * **`similar` (Balanced):** `audio: 40%`, `genre: 30%`, `artist: 15%`, `popularity: 15%` — reduces popularity bias to prioritize sound and vibe.
-    * **`vibe` (Deep Cuts):** `audio: 50%`, `genre: 35%`, `artist: 15%`, `popularity: 0%` — ignores track popularity to find pure acoustic matches.
-    * **`popular` (Radio Hits):** `audio: 35%`, `popularity: 45%`, `genre: 20%`, `artist: 0%` — prioritizes chart-topping hit singles while maintaining audio fit.
+    * **`similar` (Balanced):** `audio: 40%`, `genre: 30%`, `artist: 15%`, `popularity: 15%`, `era: 0%` — reduces popularity bias to prioritize sound and vibe.
+    * **`vibe` (Deep Cuts):** `audio: 50%`, `genre: 35%`, `artist: 15%`, `popularity: 0%`, `era: 0%` — ignores track popularity to find pure acoustic matches.
+    * **`popular` (Radio Hits):** `audio: 35%`, `popularity: 45%`, `genre: 20%`, `artist: 0%`, `era: 0%` — prioritizes chart-topping hit singles while maintaining audio fit.
+    * **`discover` (Era & Popularity):** `audio: 5%`, `genre: 35%`, `popularity: 30%`, `era: 30%` — groups tracks by the same era and genre (simulating collaborative filtering), ignoring acoustic features.
 
 ---
 
