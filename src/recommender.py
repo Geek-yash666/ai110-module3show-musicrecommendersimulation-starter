@@ -431,10 +431,28 @@ class ProductionRecommender:
         'country rock': 'country',
         'jazz': 'jazz', 'soul': 'soul', 'funk': 'soul',
         'metal': 'metal', 'heavy metal': 'metal',
-        'latin': 'latin', 'reggaeton': 'latin',
+        'latin': 'latin', 'reggaeton': 'latin', 'urbano latino': 'latin',
+        'musica mexicana': 'latin', 'norteno': 'latin', 'ranchera': 'latin',
+        'banda': 'latin', 'trap latino': 'latin', 'latin pop': 'latin',
         'classical': 'classical', 'lo-fi': 'lo-fi',
         'lofi': 'lo-fi', 'lo-fi cover': 'lo-fi',
+        # Indian / South Asian / Bollywood genres
+        'filmi': 'filmi', 'bollywood': 'filmi', 'modern bollywood': 'filmi',
+        'classic bollywood': 'filmi', 'desi pop': 'filmi', 'desi hip hop': 'hip hop',
+        'punjabi pop': 'filmi', 'punjabi hip hop': 'hip hop', 'indian pop': 'filmi',
+        'indian classical': 'indian classical', 'hindustani classical': 'indian classical',
+        'indian instrumental': 'filmi', 'ghazal': 'filmi', 'sufi': 'filmi',
+        'qawwali': 'filmi', 'bhangra': 'filmi', 'punjabi': 'filmi',
+        'tamil pop': 'filmi', 'telugu pop': 'filmi', 'marathi pop': 'filmi',
+        'carnatic': 'indian classical', 'hindustani': 'indian classical',
+        'indian indie': 'filmi', 'indian folk': 'filmi', 'indian rock': 'rock',
+        'indian edm': 'edm', 'indian lo-fi': 'lo-fi', 'desi trap': 'hip hop',
+        'desibeats': 'filmi',
+        # Global regional genres
+        'afrobeats': 'afrobeats', 'afropop': 'afrobeats', 'nigerian pop': 'afrobeats',
+        'j-pop': 'j-pop', 'anime': 'anime', 'anime score': 'anime',
     }
+
 
     def __init__(self, parquet_path: str = "docs/tracks.parquet"):
         import pandas as pd
@@ -869,17 +887,21 @@ class ProductionRecommender:
                 if label in self.BASE_GENRE_MAP:
                     result.add(self.BASE_GENRE_MAP[label])
                     continue
+                matched = False
                 for subgenre, parent in self.BASE_GENRE_MAP.items():
-                    if subgenre in label or label in subgenre:
+                    if subgenre == label or f" {subgenre}" in label or f"{subgenre} " in label:
                         result.add(parent)
+                        matched = True
                         break
+                if not matched:
+                    result.add(label)
             return result
 
         seed_base_genres = base_genres(seed_genres)
         genre_sims = np.zeros(len(self.df), dtype=np.float64)
         for i, candidate_genres in enumerate(self.df["genre_set"]):
             candidate_base = base_genres(candidate_genres)
-            if seed_base_genres & candidate_base:
+            if (seed_base_genres & candidate_base) or (seed_genres & candidate_genres):
                 # Base-genre bucket match is a floor (0.55); the rest is earned by how
                 # many exact subgenre tags the candidate shares with the seed, so a
                 # same-bucket-but-unrelated subgenre (e.g. reggaeton vs. synth-pop,
