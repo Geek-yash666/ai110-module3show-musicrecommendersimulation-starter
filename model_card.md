@@ -5,48 +5,42 @@
 
 ---
 
-## 2. Intended Use  
-This model is designed to generate personalized song recommendations by analyzing user listening behavior and taste profiles. 
-
-* **Type of Recommendations:** Generates top-k similar tracks based on user preference profiles or seed song attributes (generating similar playlists/track radios).
-* **Assumptions:** Assumes the user has consistent acoustic and energetic preferences and that their taste aligns with traditional structural genre metadata.
-* **Context:** Built for classroom exploration, simulated user taste testing, and small-to-production scale catalog ranking (tested on up to 899,000+ tracks).
+## 2. Goal / Task  
+This recommender system suggests songs to users based on their listening taste profiles. It analyzes musical attributes (like tempo, energy, and acoustic properties) alongside metadata (genre, artist, popularity) to rank and surface tracks that align with user preferences.
 
 ---
 
-## 3. How the Model Works  
-The model calculates a match score for each track candidate using a five-signal weighted scoring system:
-
-1. **Audio Similarity (35%):** Measures physical music traits (energy, valence, danceability, acousticness, speechiness, liveness, and normalized tempo) using Euclidean proximity over an 8D vector space.
-2. **Genre Similarity (15%):** Applies matching rules to base parent genres. Sharing any parent category (like `pop` or `rock`) awards full points. Exact subgenre overlap earns a small bonus.
-3. **Artist Affinity (15%):** Grants points if the track is by the user's favorite artist.
-4. **Popularity Signal (20%):** Weights 75% track popularity + 25% artist popularity to bubble hit tracks up for major pop queries.
-5. **Year Proximity (15%):** Prioritizes contemporary releases matching the user's era target using a decay curve.
+## 3. Intended Use and Non-Intended Use  
+* **Intended Use:** Designed for classroom exploration, simulated user taste testing, and content-based recommendation modeling. It is well-suited for creating track radios or recommending similar songs to seed playlists.
+* **Non-Intended Use:** Not intended for high-security environments, financial forecasting, or professional playlist curation where real-time streaming constraints, commercial licensing, or social graphs are required.
 
 ---
 
-## 4. Data  
-* **Catalog Size:** Tested on a localized catalog (`data/songs.csv`, 10 tracks) and the production-scale catalog (`docs/tracks.parquet`, 899,224 tracks).
-* **Representation:** Tracks are annotated with energy, valence, acousticness, tempo, genres, and release year.
-* **Limitations of the Data:** Lacks lyric sentiment analysis, vocal timbre properties, and cultural context. 89% of the dataset initially lacked explicit `track_artists` names, which were resolved using cross-referenced lookup keys with 97.6% accuracy.
+## 4. Data Used  
+* **Catalog Size:** Tested on a localized catalog (`data/songs.csv`, 10 tracks) and a production-scale Spotify tracks catalog (`docs/tracks.parquet`, 899,224 tracks).
+* **Features:** Energy, valence, acousticness, tempo, genres, and release year.
+* **Limitations of the Data:** The dataset lacks vocal timbre profiles, instrumental complexity, lyrics, and cultural/societal context. 89% of the dataset initially lacked explicit `track_artists` names, which were resolved using cross-referenced lookup keys with 97.6% accuracy.
 
 ---
 
-## 5. Strengths  
-* **Strong Contextual Grouping:** Consistently groups mainstream pop hits together when queried with major hit seeds like *Starboy* or *Levitating*.
-* **Typo Handling:** Uses token-based C++ fuzzy matching via `rapidfuzz` to handle user input errors smoothly.
-* **Highly Responsive Centroids:** Calculates accurate feature averages (energy, danceability) from seed playlists to generate relevant playlist radios.
+## 5. Algorithm Summary  
+The model calculates a composite score for each candidate song using five weighted factors:
+* **Audio Proximity (35%):** We calculate the Euclidean distance over an 8D vector of musical features (including energy, valence, and tempo) to measure musical alignment.
+* **Popularity (35%):** We blend 75% track popularity and 25% artist popularity to ensure hit tracks bubble up for popular seeds.
+* **Genre Match (15%):** We check if the track shares any base parent genre (e.g. pop, rock, rap) with the user profile or seed track.
+* **Artist Match (15%):** We grant points if the track is by the user's favorite artist.
+* **Year Proximity (15%):** We prioritize songs released in the same decade or era.
 
 ---
 
-## 6. Limitations and Bias  
-* **Popularity Loop Bias:** Because popularity represents 20% of the scoring formula, mainstream hits (like Taylor Swift or Justin Bieber tracks) bubble up faster than lesser-known indie releases. This can bury obscure artists in a positive feedback loop.
+## 6. Observed Behavior / Biases  
+* **Superstar Loop Bias:** Since popularity represents 35% of the total score, globally famous tracks (like Taylor Swift or Justin Bieber hits) bubble to the top of recommendation lists, occasionally burying lesser-known indie releases.
 * **Energy Proximity Limitations:** Uses a linear energy distance gap calculation, which can penalize excellent tracks that lie slightly outside the target range, even if their genre and mood match perfectly.
 * **Genre Label Bias:** If a song's genre metadata is missing or sparse, the engine struggles to match it, meaning underrepresented indie tracks are heavily filtered out.
 
 ---
 
-## 7. Evaluation  
+## 7. Evaluation Process  
 
 We ran a simulation test on 4 diverse profiles using the local `songs.csv` catalog:
 
@@ -86,19 +80,23 @@ We ran a simulation test on 4 diverse profiles using the local `songs.csv` catal
    Reason: Genre match: 'pop' (+2.0); Energy match: 0.82 vs target 0.90 (+0.92); Acoustic preference match (+0.5); Valence (0.84) & Danceability (0.79) proximity (+0.34); Popularity boost: 50.0/100 (+0.10)
 ```
 
-### Comparison & Musical Analysis:
+### Profile Comparisons:
 * **High-Energy Pop vs. Chill Lofi:** High-Energy Pop correctly favors fast, happy pop tracks (Sunrise City, Rooftop Lights) with targets around 0.85 energy. The Chill Lofi profile shifts entirely toward low-energy acoustic structures (Library Rain at 0.35 energy) and filters out pop.
 * **Deep Intense Rock vs. High-Energy Pop:** Intense Rock prioritizes Storm Runner (+2.0 for rock) over Pop, even though both have high energy.
 * **Adversarial Conflict:** The adversarial pop/sad/high-energy profile outputs Gym Hero as #1 because its high pop-genre weight (+2.0) and high energy similarity outweigh the lack of a "sad" mood match. The system prioritizes the genre structure over mood when they conflict.
 
 ---
 
-## 8. Future Work  
-* **Serendipity Injection:** Implement a random mutation factor (e.g., 5% random genre candidates) to pop the filter bubble.
+## 8. Ideas for Improvement  
+* **Serendipity Injection:** Implement a random mutation factor (e.g., 5% random genre candidates) to pop the filter bubble and suggest unexpected music.
 * **Lyric Vibe Extraction:** Integrate natural language processing on lyric logs to establish deeper mood classifications.
 * **Collaborative Filtering:** Transition to a hybrid model that incorporates co-listening matrix data.
 
 ---
 
 ## 9. Personal Reflection  
-Developing and evaluating recommender systems highlighted that a mathematical centroid can translate complex human music tastes into simple distance checks. I realized that popularity signals must be carefully tuned to prevent superstars from completely dominating recommendation feeds, illustrating the balance between familiarity and discovery.
+
+* **Biggest Learning Moment:** Implementing the two-pass search logic. Discovering that C++ rapidfuzz truncated results before sorting by popularity taught me that database-level ordering parameters must be established *before* applying fuzzy thresholds.
+* **AI Tool Integration:** AI was highly effective in generating vectorized matrix operations and parsing nested genre structures. However, I had to double-check search result deduplication logic as early iterations incorrectly matched tracks by index rather than by unique track identifiers.
+* **Surprising Algorithms:** I was surprised by how natural a basic Euclidean distance check over 8 audio parameters feels. Simply checking distance across values like valence and energy produces recommendations that intuitively align with human taste.
+* **Next Steps:** If I extended this project, I would implement collaborative filtering based on user playlist overlap and add real-time feedback loops (e.g., "skip" count penalties) to dynamically alter the user's taste centroid.
