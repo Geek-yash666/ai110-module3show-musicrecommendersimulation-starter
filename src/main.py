@@ -4,7 +4,6 @@ Demonstrates:
   1. Small dataset loading (data/songs.csv)
   2. Profile Differentiation: "Intense Rock" vs. "Chill Lofi"
   3. Single-song and Multi-song Seed Recommendations (Track Radio)
-  4. Large-scale Parquet dataset scoring (docs/tracks.parquet)
 """
 
 import os
@@ -19,8 +18,6 @@ from src.recommender import (
     Recommender,
     load_songs,
     recommend_songs,
-    score_parquet_tracks,
-    ProductionRecommender
 )
 
 
@@ -84,7 +81,7 @@ def main() -> None:
     # -------------------------------------------------------------
     # 2. Seed-Song / Track Radio Mode (Single and Multi-Song Seed)
     # -------------------------------------------------------------
-    if len(song_objects) >= 2:
+    if len(song_objects) >= 4:
         seed_track_1 = song_objects[1]  # Midnight Coding (lofi)
         seed_track_2 = song_objects[3]  # Library Rain (lofi)
 
@@ -95,38 +92,6 @@ def main() -> None:
         print(f"🎧 Generating Multi-Song Radio from seeds: '{seed_track_1.title}' + '{seed_track_2.title}'")
         multi_seed_recs = recommender.recommend_from_seed([seed_track_1, seed_track_2], k=3)
         print_recommendations("Multi-Song Seed Recommendations (Playlist Radio - Small Dataset)", multi_seed_recs)
-
-    # -------------------------------------------------------------
-    # 3. Parquet Evaluation (docs/tracks.parquet - 1M+ dataset)
-    # -------------------------------------------------------------
-    parquet_path = "docs/tracks.parquet"
-    # Also support checking if parts exist
-    parts_exist = os.path.exists(os.path.join(os.path.dirname(parquet_path), "tracks_part1.parquet")) and \
-                  os.path.exists(os.path.join(os.path.dirname(parquet_path), "tracks_part2.parquet"))
-
-    if os.path.exists(parquet_path) or parts_exist:
-        print("\n🚀 Testing Recommender Engine on Production Parquet Dataset...")
-        
-        # A. Taste Profile 1: Intense Rock (Parquet)
-        parquet_rock = score_parquet_tracks(parquet_path, intense_rock_profile, k=3)
-        print_recommendations("User Taste Profile 1: Intense Rock (Parquet Dataset)", parquet_rock)
-
-        # B. Taste Profile 2: Chill Lofi (Parquet)
-        parquet_lofi = score_parquet_tracks(parquet_path, chill_lofi_profile, k=3)
-        print_recommendations("User Taste Profile 2: Chill Lofi (Parquet Dataset)", parquet_lofi)
-
-        # C. Production Track Radio (Parquet)
-        print("Loading ProductionRecommender for search and track radio...")
-        prod_recommender = ProductionRecommender(parquet_path)
-        
-        # Search for a seed track in production
-        seed_search = prod_recommender.fuzzy_search_songs("Midnight Coding", limit=1)
-        if seed_search:
-            seed_dict = seed_search[0]
-            print(f"🎧 Generating Track Radio on Parquet for seed: '{seed_dict['name']}' by {seed_dict['artist']}")
-            parquet_track_radio = prod_recommender.recommend(seed_dict["catalog_idx"], k=3)
-            print_recommendations("Single-Song Seed Recommendations (Track Radio - Parquet Dataset)", parquet_track_radio)
-
 
 if __name__ == "__main__":
     main()

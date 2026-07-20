@@ -12,7 +12,7 @@ Features:
     - Auto-detects artist vs song name queries
     - Artist search: shows up to 15 tracks by that artist
     - Song search: shows matched songs, lets user pick one
-    - Generates top 10 recommendations using 5-signal cosine-similarity scoring
+    - Generates top 10 recommendations using four-signal, 8D Euclidean scoring
 """
 
 import sys
@@ -22,7 +22,6 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.recommender import ProductionRecommender
-from rapidfuzz import fuzz
 
 
 # ─── ANSI Color Helpers ──────────────────────────────────────────────────────
@@ -54,7 +53,7 @@ def styled(text, *styles):
 BANNER = f"""
 {styled("━" * 60, Colors.CYAN)}
 {styled("  🎵  Music Recommender — Interactive Search", Colors.BOLD, Colors.CYAN)}
-{styled("  Powered by cosine-similarity on 899K+ tracks", Colors.DIM, Colors.CYAN)}
+{styled("  Powered by 8D Euclidean similarity on 899K+ tracks", Colors.DIM, Colors.CYAN)}
 {styled("━" * 60, Colors.CYAN)}
 """
 
@@ -116,6 +115,15 @@ def get_user_input(prompt):
     except (EOFError, KeyboardInterrupt):
         print(f"\n{styled('Goodbye! 🎵', Colors.DIM)}")
         sys.exit(0)
+
+
+def get_recommendation_settings():
+    """Collect an optional ranking mode and discovery setting from the user."""
+    mode = get_user_input("Mode: balanced, similar, popular, or diverse [balanced]: ").strip().lower() or "balanced"
+    if mode not in ProductionRecommender.SCORING_PRESETS:
+        print(f"  {styled('Unknown mode; using balanced.', Colors.YELLOW)}")
+        mode = "balanced"
+    return mode, 0.2 if mode == "diverse" else 0.0
 
 
 # ─── Search Logic ────────────────────────────────────────────────────────────
@@ -201,6 +209,7 @@ def main():
             continue
 
         selected = None
+        selection_options = []
 
         # ─── Artist Mode ─────────────────────────────────────────────
         if query_type == "artist":
@@ -211,6 +220,7 @@ def main():
             if not tracks:
                 print(f"  {styled('No tracks found for this artist in the dataset.', Colors.DIM)}")
                 continue
+            selection_options = tracks
 
             print_track_list(tracks, title=f"Top {len(tracks)} tracks by {artist_name}", show_album=True)
 
@@ -236,6 +246,7 @@ def main():
         # ─── Song Mode ────────────────────────────────────────────────
         elif query_type == "song":
             song_matches = result
+            selection_options = song_matches
 
             if len(song_matches) == 1:
                 # Auto-select if only one match
@@ -264,10 +275,46 @@ def main():
                     pending_query = selection
                     continue
 
-        # ─── Generate Recommendations ─────────────────────────────────
+        # ─── Playlist radio and ranking controls ───────────────────────
+        seed_indices = [selected["catalog_idx"]]
+        if len(selection_options) > 1:
+            additional = get_user_input(
+                "Add playlist seeds from the displayed list (e.g. 2,3; Enter to skip): "
+            ).strip()
+            if additional:
+                try:
+                    for choice in additional.split(","):
+                        candidate = selection_options[int(choice.strip()) - 1]["catalog_idx"]
+                        if candidate not in seed_indices:
+                            seed_indices.append(candidate)
+                except (ValueError, IndexError):
+                    print(f"  {styled('Invalid playlist choices; using the selected track only.', Colors.YELLOW)}")
+                    seed_indices = [selected["catalog_idx"]]
+
+        mode, discovery_ratio = get_recommendation_settings()
+        seed_rows = recommender.catalog.iloc[seed_indices]
+        feature_means = seed_rows[["energy", "danceability", "valence"]].mean()
+        genre_set = set().union(*seed_rows["genre_set"])
+        genre_str = next(iter(genre_set), "pop")
+        energy_display = f"{feature_means['energy']:.2f}"
+        dance_display = f"{feature_means['danceability']:.2f}"
+        valence_display = f"{feature_means['valence']:.2f}"
+
+        print(f"\n  {styled('✨ User Profile taste signature derived from seed:', Colors.WHITE, Colors.BOLD)}")
+        print(f"     - Favorite Genre: {styled(genre_str.title(), Colors.YELLOW)}")
+        print(f"     - Seed Tracks: {styled(str(len(seed_indices)), Colors.YELLOW)}")
+        print(f"     - Target Energy Centroid: {styled(energy_display, Colors.YELLOW)}")
+        print(f"     - Target Danceability Centroid: {styled(dance_display, Colors.YELLOW)}")
+        print(f"     - Target Valence Centroid: {styled(valence_display, Colors.YELLOW)}")
+        print(f"     - Ranking Mode: {styled(mode.title(), Colors.YELLOW)}")
+
         print(f"\n  {styled('⏳ Computing recommendations...', Colors.DIM)}", flush=True)
 
-        recs = recommender.recommend(selected["catalog_idx"], k=10, max_per_artist=3)
+        recs = recommender.recommend_from_seeds(
+            seed_indices, k=10, max_per_artist=3,
+            weights=ProductionRecommender.SCORING_PRESETS[mode],
+            discovery_ratio=discovery_ratio,
+        )
 
         if not recs:
             print(f"  {styled('No recommendations could be generated.', Colors.RED)}")

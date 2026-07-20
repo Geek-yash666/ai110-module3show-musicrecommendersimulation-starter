@@ -2,7 +2,7 @@
 
 ## 1. Model Name
 
-**VibeFinder 4.0 (Hybrid Cosine & Multi-Signal Engine)**
+**VibeFinder 4.0 (Hybrid Euclidean & Multi-Signal Engine)**
 
 ---
 
@@ -13,7 +13,7 @@ This music recommender system is designed to generate personalized song recommen
 * **What it does:** It generates similar song recommendations based on user profiles or seed tracks.
 * **Usage of `UserProfile`:**
   * **Simulation Mode (`src/main.py`):** Uses a `UserProfile` object representing target tastes (favorite genre, mood, target energy, acoustic preference) to rank and score the music catalog.
-  * **Interactive CLI Mode (`tests/interactive_recommender.py`):** Focuses on single seed-song recommendations. It uses the selected track's physical attributes directly to score similarity against all 899K tracks.
+  * **Interactive CLI Mode (`tests/interactive_recommender.py`):** Supports one or more displayed seed tracks. It averages their 8D audio vectors into a playlist centroid and scores the full catalog.
 * **Target Audience:** Designed for developers and users who want to find highly relevant pop, rock, and alternative hits. It is fully prototype-ready and can be deployed to production with minor upgrades (such as microservice deployment and API integrations).
 * **Assumptions about the User:** Assumes that the user's immediate listening taste can be represented mathematically as a combination of categorical properties (genre, artist, mood) and continuous audio centroids.
 
@@ -23,8 +23,8 @@ This music recommender system is designed to generate personalized song recommen
 
 The system compares song attributes using a multi-signal composite score:
 
-* **Song Features Used:** Genre, artist, popularity (track and artist), release year, energy, valence, danceability, acousticness, speechiness, liveness, instrumentalness, and tempo.
-* **User Preferences Considered:** Target base genre, favorite artist, target era (release year), and an 8D audio feature target profile.
+* **Song Features Used:** Genre, artist, track/artist popularity, energy, valence, danceability, acousticness, speechiness, liveness, instrumentalness, and tempo.
+* **User Preferences Considered:** Seed-derived base genres, artists, and an 8D audio centroid. CLI presets can favor similarity, popularity, or discovery.
 * **How it Computes a Score:**
   The composite score (0.0 to 1.0) is calculated as:
   $$
@@ -37,12 +37,14 @@ The system compares song attributes using a multi-signal composite score:
   * *Artist Affinity (15%):* Boosts tracks by the same artist.
 * **Changes from Starter Logic:** Upgraded from a simple 3-feature point counter to a high-performance, vectorized 12-feature pipeline using NumPy. It includes subgenre parent mapping, hybrid track popularity priority, and per-artist capping.
 
+* **Recommendation Controls:** `balanced` uses the documented default weights; `similar` emphasizes audio proximity; `popular` emphasizes hybrid popularity; and `diverse` reserves 20% of results for high-audio-similarity tracks outside the seed artist and base genre. Each result includes the weighted contribution of every active signal.
+
 ---
 
 ## 4. Data
 
 * **Catalog Size:** Local testing catalog (`data/songs.csv`, 10 tracks) and the production Spotify tracks dataset (`docs/tracks.parquet`, 899,224 tracks).
-* **Features:** Energy, valence, danceability, acousticness, speechiness, liveness, instrumentalness, tempo, genres, popularity, and release year.
+* **Features:** Energy, valence, danceability, acousticness, speechiness, liveness, instrumentalness, tempo, genres, and track/artist popularity.
 * **Metadata Resolution:** 89% of the dataset initially lacked explicit artist names, which were resolved using cross-referenced lookup keys with 97.6% accuracy. Includes split parquet file resolution for `tracks_part1.parquet` and `tracks_part2.parquet`.
 
 ---

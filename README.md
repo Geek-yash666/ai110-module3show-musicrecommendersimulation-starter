@@ -32,7 +32,6 @@ This system models songs using **multi-dimensional audio features**:
   - **Instrumentalness**: Vocal absence score
   - **Normalized Tempo**: Normalized BPM (50–200 BPM mapped to 0.0–1.0)
 - **Popularity**: Hybrid metric combining **75% track-level popularity** and **25% artist popularity** (0–100).
-- **Release Date / Year**: Track release year for era proximity.
 
 **UserProfile:**
 
@@ -52,6 +51,8 @@ $$
 3. **Genre Similarity (15%)**: Maps subgenres (e.g. `canadian pop`, `dance pop`) to base categories (`pop`). Sharing a base category awards full points, with a bonus for exact subgenre overlaps.
 4. **Artist Affinity (15%)**: Boosts tracks by the same artist as the seed.
 
+The interactive CLI also offers `similar`, `popular`, and `diverse` presets. Playlist radio accepts multiple displayed seed tracks, averages their 8D vectors into a centroid, and combines their genre and artist metadata. Diverse mode reserves discovery slots for high-audio-similarity tracks outside the seed artist and base genre.
+
 ### **Potential Biases & Risks**
 
 * **Genre & Artist Over-Prioritization Bias**: High genre/artist weighting can over-prioritize categorical match rules, occasionally ignoring great songs in different genres that match the user's mood or energy profile.
@@ -64,8 +65,8 @@ Once scored, candidate tracks are ranked and filtered:
 
 1. Sort by composite score (descending).
 2. Filter out exact seed track duplicates.
-3. Deduplicate by normalized song title to prevent duplicate album re-releases of the same track from cluttering results.
-4. Limit per-artist output (default max 2–3 tracks per artist).
+3. Deduplicate normalized title-and-artist pairs to prevent duplicate album re-releases while preserving covers by other artists.
+4. Limit per-artist output (default max 2–3 tracks per artist), except tracks with unresolved artists.
 5. Return the top $k$ recommendations.
 
 ---
@@ -89,9 +90,9 @@ flowchart TD
     D2 --> D3
     D3 --> E
   
-    E -->|"User Selects Seed Track"| F["⚙️ ProductionRecommender.recommend()<br>(Vectorized Numpy Scoring)"]
+    E -->|"User Selects One or More Seed Tracks"| F["⚙️ ProductionRecommender.recommend_from_seeds()<br>(Vectorized NumPy Scoring)"]
   
-    subgraph "5-Signal Scoring Engine (899K+ Tracks Matrix)"
+    subgraph "Four-Signal Scoring Engine (899K+ Tracks Matrix)"
         F --> S1["Signal 1: 8D Audio Euclidean Proximity (35%)<br>(energy, valence, dance, acoustic, tempo_norm)"]
         F --> S2["Signal 2: Hybrid Track/Artist Popularity (35%)<br>(75% track pop + 25% artist pop)"]
         F --> S3["Signal 3: Base-Genre Parent Mapping (15%)<br>(subgenres normalized to parent categories)"]
@@ -107,6 +108,32 @@ flowchart TD
   
     H1 & H2 & H3 --> I["🏆 Top 10 High-Relevance Recommendations<br>Formatted with % Scores & Badges"]
 ```
+
+---
+
+## Recommender Engine Logic & Two-Track Architecture
+
+The `src/recommender.py` file is divided into **two distinct architectural tracks** serving different purposes:
+
+### 1. Prototype & Grading Track (Lines 1–448)
+* **Design Philosophy:** Python Object-Oriented & Iterative Loop pattern.
+* **Core Classes/Functions:** `Song`, `UserProfile`, `score_song()`, `recommend_songs()`, `Recommender`, and `load_songs()`.
+* **How it Works:** Converts songs into independent Python dataclass objects and loops through them one-by-one to compute explicit rule-based points (e.g. `+2.0` for genre, `+1.0` for mood).
+* **Use Case:** Primarily used for grading verification (`tests/test_recommender.py`) and small dataset prototyping (`data/songs.csv`), as native Python loops are too slow to run on millions of songs.
+
+### 2. Production Vectorized Track
+* **Design Philosophy:** Vectorized array programming using NumPy and Pandas.
+* **Core Class:** `ProductionRecommender`.
+* **How it Works:** Bypasses individual song objects and loops. It loads all 899,224 songs into a single memory block (Pandas DataFrame and 2D NumPy Matrix) and scores them in parallel using vectorized matrix algebra (Euclidean distance operations).
+* **Use Case:** Primarily used by the interactive CLI engine (`tests/interactive_recommender.py`) to search and generate recommendations over the entire 899K+ Spotify dataset in under **20 milliseconds**.
+
+### **Logical Commonalities vs. Differences**
+
+* **What is Identical (The Recommendation Logic):** Both tracks use genre, artist, and audio-feature matching, but the production engine has the full 8D feature set, fuzzy search, hybrid popularity, configurable ranking presets, and discovery filtering.
+* **What Differs (Execution and Scoring Models):**
+  * **Data Structures:** The Prototype track instantiates individual Python objects (`Song`, `UserProfile`) and handles lists of dictionaries, which is slow but highly transparent. The Production track aggregates all song values into a single 2D NumPy matrix (`self.audio_matrix`), making calculations extremely fast.
+  * **Scoring Arithmetic:** The Prototype track uses an additive point-based scoring model (maximum score of `5.2` points), making it easy to explain using text strings. The Production track uses continuous vector multiplication to calculate normalized percentage relevance values (0.0% to 100.0%) for easy sorting.
+  * **Fuzzy Parsing:** The Production track features a two-pass fuzzy search engine (using `rapidfuzz` and database-level popularity sorting) to resolve misspelled input queries, which is omitted in the lightweight Prototype track.
 
 ---
 
@@ -231,21 +258,11 @@ Loading parquet dataset from docs/tracks.parquet...
 3. Distance — Knots (Score: 3.11)
    Reason: Mood match: 'chill' (+1.0); Energy match: 0.34 vs target 0.35 (+0.99); Acoustic preference match (+0.5); Valence (0.49) & Danceability (0.51) proximity (+0.49); Popularity boost: 62.0/100 (+0.12)
 
-Loading ProductionRecommender for search and track radio...
-🎧 Generating Track Radio on Parquet for seed: 'Midnight King' by Fury Weekend
-
-==========================================
-🎵 Single-Song Seed Recommendations (Track Radio - Parquet Dataset)
-==========================================
-1. Alien Blues — Gawk (Score: 0.75)
-   Reason: Audio similarity: 0.91; Genre overlap: 1.00; Popularity: 0.80; Era match: 0.80
-2. Knightriders — Fury Weekend (Score: 0.74)
-   Reason: Audio similarity: 0.92; Genre overlap: 1.00; Artist match: 1.0; Popularity: 0.34; Era match: 0.93
-3. About You — The 1975 (Score: 0.73)
-   Reason: Audio similarity: 0.86; Genre overlap: 1.00; Popularity: 0.81; Era match: 0.73
 ```
 
 ### 2. Interactive Search & Recommendation Output (`python3 tests/interactive_recommender.py`)
+
+The interactive CLI is the production Parquet entry point. It supports one or more selected seed tracks, ranking presets, and score-contribution explanations.
 
 ```text
 ────────────────────────────────────────────────────────────

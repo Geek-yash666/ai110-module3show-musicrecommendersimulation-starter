@@ -1,6 +1,6 @@
 import csv
 import os
-from typing import List, Dict, Tuple, Optional, Union
+from typing import List, Dict, Tuple, Union
 from dataclasses import dataclass
 from collections import Counter
 
@@ -8,7 +8,7 @@ from collections import Counter
 class Song:
     """
     Represents a song and its attributes.
-    Required by tests/test_recommender.py aswell as interactive_recommender.py
+    Required by tests/test_recommender.py
     """
     id: int
     title: str
@@ -376,99 +376,27 @@ def recommend_songs(user_prefs: Union[Dict, UserProfile], songs: List[Union[Dict
     return scored_items
 
 
-def score_parquet_tracks(parquet_path: str, user_prefs: Union[Dict, UserProfile], k: int = 5) -> List[Tuple[Dict, float, str]]:
-    """
-    High-performance Parquet evaluation for large datasets (e.g. 1M+ tracks in tracks.parquet).
-    Uses pandas / pyarrow for chunked or vectorized processing.
-    """
-    try:
-        import pandas as pd
-    except ImportError:
-        print("pandas not installed. Skipping parquet scoring.")
-        return []
-
-    if not os.path.exists(parquet_path):
-        part1 = os.path.join(os.path.dirname(parquet_path), "tracks_part1.parquet")
-        part2 = os.path.join(os.path.dirname(parquet_path), "tracks_part2.parquet")
-        if os.path.exists(part1) and os.path.exists(part2):
-            print("Combining split parquet files (part1 & part2)...")
-            df1 = pd.read_parquet(part1)
-            df2 = pd.read_parquet(part2)
-            df = pd.concat([df1, df2])
-        else:
-            print(f"Parquet file {parquet_path} not found.")
-            return []
-    else:
-        print(f"Loading parquet dataset from {parquet_path}...")
-        df = pd.read_parquet(parquet_path)
-    
-    # Filter clean tracks and avoid seed track duplicate if matching profile exists
-    # Sample up to 20,000 for better recommendation pool
-    sample_df = df.dropna(subset=["danceability", "energy", "valence", "acousticness"]).head(20000)
-
-    song_dicts = []
-    for _, row in sample_df.iterrows():
-        artist_val = row.get("track_artists")
-        if not artist_val or pd.isna(artist_val) or str(artist_val).strip().lower() in ("nan", "none", ""):
-            artist_val = row.get("track_album_album")
-            if not artist_val or pd.isna(artist_val) or str(artist_val).strip().lower() in ("nan", "none", ""):
-                artist_val = row.get("album_name")
-                if not artist_val or pd.isna(artist_val) or str(artist_val).strip().lower() in ("nan", "none", ""):
-                    artist_val = "Unknown Artist"
-
-        title_val = row.get("name")
-        if not title_val or pd.isna(title_val) or str(title_val).strip().lower() in ("nan", "none", ""):
-            title_val = "Unknown Title"
-
-        pop_val = row.get("artist_popularity", row.get("popularity", 50.0))
-        if pd.isna(pop_val) or pop_val is None or str(pop_val).strip().lower() in ("nan", "none", ""):
-            pop_val = 50.0
-
-        song_dict = {
-            "id": row.get("track_id", ""),
-            "title": str(title_val),
-            "artist": str(artist_val),
-            "genre": str(row.get("genres", "")),
-            "mood": "chill" if float(row.get("energy", 0.5) if pd.notnull(row.get("energy")) else 0.5) < 0.5 else "intense",
-            "energy": float(row.get("energy", 0.5) if pd.notnull(row.get("energy")) else 0.5),
-            "tempo_bpm": float(row.get("tempo", 120.0) if pd.notnull(row.get("tempo")) else 120.0),
-            "valence": float(row.get("valence", 0.5) if pd.notnull(row.get("valence")) else 0.5),
-            "danceability": float(row.get("danceability", 0.5) if pd.notnull(row.get("danceability")) else 0.5),
-            "acousticness": float(row.get("acousticness", 0.5) if pd.notnull(row.get("acousticness")) else 0.5),
-            "popularity": float(pop_val),
-        }
-        song_dicts.append(song_dict)
-
-    # Exclude exact seed track matches from candidate recommendations if a seed song name is in user profile
-    # (Mimics Code 2: clean_df[~clean_df['name'].str.contains(...)])
-    seed_name = "There's Nothing Holdin' Me Back".lower()
-    song_dicts = [s for s in song_dicts if seed_name not in s["title"].lower()]
-
-    return recommend_songs(user_prefs, song_dicts, k=k)
-
-
 # =============================================================================
-# Recommender ( Cosine Similarity Engine)
+# Recommender ( 8D Euclidean-distance recommendation engine )
 # =============================================================================
 
 class ProductionRecommender:
     """
- music recommender using multi-signal weighted scoring:
-      - 35% Audio Feature Cosine Similarity (7D vector)
-      - 25% Genre Overlap (Jaccard similarity on parsed subgenre sets)
-      - 20% Artist Affinity (exact match + same-cluster boost)
-      - 10% Popularity (normalized artist_popularity)
-      - 10% Release Year Proximity (exponential decay over 15-year window)
+    Music recommender using four-signal, 8D Euclidean scoring:
+      - Audio similarity
+      - Genre overlap
+      - Artist affinity
+      - Hybrid track and artist popularity
 
     Operates on the full parquet dataset (~900K tracks) with smart indexing.
     """
 
-    # Weights for composite scoring — tuned for musical relevance
-    W_AUDIO = 0.35       # Audio profile is the strongest signal
-    W_GENRE = 0.15       # Base-genre match (broad, not subgenre-specific)
-    W_ARTIST = 0.15      # Same artist boost
-    W_POPULARITY = 0.20  # Mainstream hit priority (uses track-level popularity)
-    W_YEAR = 0.15        # Era proximity — favor contemporary hits
+    SCORING_PRESETS = {
+        "balanced": {"audio": 0.35, "popularity": 0.35, "genre": 0.15, "artist": 0.15},
+        "similar": {"audio": 0.55, "popularity": 0.15, "genre": 0.20, "artist": 0.10},
+        "popular": {"audio": 0.20, "popularity": 0.55, "genre": 0.15, "artist": 0.10},
+        "diverse": {"audio": 0.45, "popularity": 0.20, "genre": 0.25, "artist": 0.10},
+    }
 
     AUDIO_FEATURES = [
         "energy", "valence", "danceability", "acousticness",
@@ -612,22 +540,14 @@ class ProductionRecommender:
         # Track popularity is more indicative of actual hits than artist-level
         track_pop = pd.to_numeric(df.get("popularity", 0), errors="coerce").fillna(0.0)
         artist_pop = pd.to_numeric(df.get("artist_popularity", 50.0), errors="coerce").fillna(50.0)
-        # Use the higher of track or artist popularity
+        df["norm_track_popularity"] = (track_pop / 100.0).clip(0, 1)
+        df["norm_artist_popularity"] = (artist_pop / 100.0).clip(0, 1)
+        # Retained for catalog sorting, where either form of popularity is useful.
         df["norm_popularity"] = np.maximum(track_pop, artist_pop) / 100.0
 
         # --- Build audio feature matrix (numpy) ---
         self.df = df.reset_index(drop=True)
         self.audio_matrix = self.df[self.AUDIO_FEATURES].values.astype(np.float64)
-
-        # Pre-compute norms for cosine similarity
-        self._norms = np.linalg.norm(self.audio_matrix, axis=1, keepdims=True)
-        self._norms[self._norms == 0] = 1e-10  # avoid division by zero
-
-        # --- Build search indices ---
-        self._name_index = list(self.df["resolved_name"])
-        self._artist_index = list(self.df["resolved_artist"])
-        self._name_lower_list = list(self.df["name_lower"])
-        self._artist_lower_list = list(self.df["artist_lower"])
 
         # Build deduplicated lookup for fuzzy search (unique song+artist combos)
         self._build_search_catalog()
@@ -850,194 +770,160 @@ class ProductionRecommender:
             })
         return tracks
 
-    def recommend(self, seed_catalog_idx: int, k: int = 10, max_per_artist: int = 3) -> List[Dict]:
-        """
-        Generate top-k recommendations from a seed track using 5-signal scoring.
-
-        Uses the FULL dataset (not just catalog) so we score every track,
-        then deduplicates and limits per-artist in the final results.
-        """
-        import re
-        np = self._np
-
-        seed_row = self.catalog.iloc[seed_catalog_idx]
-        seed_name = str(seed_row["resolved_name"])
-        seed_artist = str(seed_row["resolved_artist"]).lower()
-        seed_genres = seed_row["genre_set"]
-        seed_year = seed_row["release_year"]
-
-        # Get the original df index for this catalog entry to pull the audio vector
-        # We need to find this track in self.df
-        seed_track_id = seed_row.get("track_id", None)
-        seed_name_lower = seed_row["name_lower"]
-
-        # Find seed in main df by matching track_id or name+artist
-        if seed_track_id and str(seed_track_id) != "nan":
-            seed_mask = self.df["track_id"] == seed_track_id
-            if seed_mask.any():
-                seed_df_idx = self.df[seed_mask].index[0]
-            else:
-                seed_df_idx = 0
-        else:
-            seed_mask = (self.df["name_lower"] == seed_name_lower) & (self.df["artist_lower"] == seed_artist)
-            if seed_mask.any():
-                seed_df_idx = self.df[seed_mask].index[0]
-            else:
-                seed_df_idx = 0
-
-        seed_vector = self.audio_matrix[seed_df_idx].reshape(1, -1)
-        seed_norm = np.linalg.norm(seed_vector)
-        if seed_norm == 0:
-            seed_norm = 1e-10
-
-        # --- Signal 1: Audio Similarity (Euclidean distance-based) ---
-        # Euclidean distance is more sensitive to actual feature differences
-        # than cosine similarity, giving better differentiation for pop songs
-        diffs = self.audio_matrix - seed_vector
-        euclidean_dists = np.sqrt(np.sum(diffs ** 2, axis=1))
-        # Normalize: max possible distance in 7D unit cube = sqrt(7) ≈ 2.65
-        max_dist = np.sqrt(len(self.AUDIO_FEATURES))
-        audio_sims = np.clip(1.0 - (euclidean_dists / max_dist), 0, 1)
-
-        # --- Signal 2: Base-Genre Similarity ---
-        # Extract base genres from subgenre labels for broader matching:
-        # "canadian pop" + "canadian contemporary r&b" → {"pop", "r&b"}
-        def extract_base_genres(genre_set):
-            base = set()
-            for g in genre_set:
-                g_lower = g.lower().strip()
-                # Check direct mapping
-                if g_lower in self.BASE_GENRE_MAP:
-                    base.add(self.BASE_GENRE_MAP[g_lower])
-                else:
-                    # Substring match: "swedish tropical house" → "edm" (via "house")
-                    for subgenre, parent in self.BASE_GENRE_MAP.items():
-                        if subgenre in g_lower or g_lower in subgenre:
-                            base.add(parent)
-                            break
-            return base
-
-        seed_base_genres = extract_base_genres(seed_genres)
-
-        genre_sims = np.zeros(len(self.df), dtype=np.float64)
-        if seed_base_genres:
-            for i, gs in enumerate(self.df["genre_set"]):
-                if gs:
-                    cand_base = extract_base_genres(gs)
-                    if cand_base:
-                        # Simple overlap: if they share ANY base genre, it's a match
-                        if seed_base_genres & cand_base:
-                            base_sim = 1.0
-                        else:
-                            base_sim = 0.0
-
-                        # Bonus for exact subgenre overlap (0.2 max)
-                        exact_overlap = len(seed_genres & gs)
-                        exact_bonus = min(exact_overlap * 0.1, 0.2)
-
-                        genre_sims[i] = min(base_sim + exact_bonus, 1.0)
-
-        # --- Signal 3: Artist Affinity ---
-        artist_sims = np.zeros(len(self.df), dtype=np.float64)
-        artist_lower_arr = self.df["artist_lower"].values
-        for i, a in enumerate(artist_lower_arr):
-            if a == seed_artist:
-                artist_sims[i] = 1.0
-            elif seed_artist in str(a) or str(a) in seed_artist:
-                artist_sims[i] = 0.5
-
-        # --- Signal 4: Hybrid Popularity (Track Hits Priority) ---
-        # 75% pure track popularity + 25% artist popularity
-        # This ensures hit singles (Cruel Summer, Levitating, Shape of You, Sunflower)
-        # beat non-singles and obscure background tracks.
-        track_pops = self._pd.to_numeric(self.df.get("popularity", 0), errors="coerce").fillna(0.0).values / 100.0
-        artist_pops = self.df["norm_popularity"].values.astype(np.float64)
-        pop_scores = (track_pops * 0.75) + (artist_pops * 0.25)
-
-        # --- Signal 5: Year Proximity (15-year decay) ---
-        years = self.df["release_year"].values.astype(np.float64)
-        year_diffs = np.abs(years - seed_year)
-        year_sims = np.clip(1.0 - (year_diffs / 15.0), 0, 1)
-
-        # --- Composite Score ---
-        # Weights tuned for hit recommendation quality:
-        # Audio 35%, Popularity 35%, Genre 15%, Artist 15%
-        final_scores = (
-            0.35 * audio_sims +
-            0.35 * pop_scores +
-            0.15 * genre_sims +
-            0.15 * artist_sims
+    def recommend(self, seed_catalog_idx: int, k: int = 10, max_per_artist: int = 3,
+                  weights: Dict[str, float] = None, discovery_ratio: float = 0.0) -> List[Dict]:
+        """Generate recommendations from one selected catalog track."""
+        return self.recommend_from_seeds(
+            [seed_catalog_idx], k=k, max_per_artist=max_per_artist,
+            weights=weights, discovery_ratio=discovery_ratio,
         )
 
-        # --- Rank, deduplicate, and filter ---
-        ranked_indices = np.argsort(-final_scores)
+    def recommend_from_seeds(self, seed_catalog_indices: List[int], k: int = 10,
+                             max_per_artist: int = 3, weights: Dict[str, float] = None,
+                             discovery_ratio: float = 0.0) -> List[Dict]:
+        """Generate playlist radio from one or more catalog tracks.
 
-        def norm_title(t):
-            t = str(t).lower().strip()
-            t = re.sub(r'\s*[\(\[].*?[\)\]]', '', t)
-            t = re.sub(r'\s*-\s*(remix|remaster|radio edit|live|deluxe|bonus).*', '', t, flags=re.IGNORECASE)
-            return t.strip()
+        Seed vectors are averaged into an 8D centroid. Genre and artist affinity
+        are calculated against the union of the selected seed metadata.
+        """
+        import re
 
-        seed_norm_title = norm_title(seed_name)
-        seen_titles = {seed_norm_title}
+        np = self._np
+        if not seed_catalog_indices:
+            raise ValueError("seed_catalog_indices cannot be empty")
+        if k <= 0:
+            return []
+
+        seed_rows = self.catalog.iloc[seed_catalog_indices]
+        if getattr(seed_rows, "ndim", 1) == 1:
+            seed_rows = seed_rows.to_frame().T
+
+        def main_index(seed_row):
+            track_id = seed_row.get("track_id", None)
+            if track_id is not None and str(track_id) != "nan":
+                match = self.df["track_id"] == track_id
+            else:
+                match = ((self.df["name_lower"] == seed_row["name_lower"]) &
+                         (self.df["artist_lower"] == seed_row["artist_lower"]))
+            if not match.any():
+                raise ValueError("Selected seed track is not present in the full catalog")
+            return int(self.df[match].index[0])
+
+        seed_df_indices = [main_index(row) for _, row in seed_rows.iterrows()]
+        seed_vector = self.audio_matrix[seed_df_indices].mean(axis=0, keepdims=True)
+        seed_genres = set().union(*seed_rows["genre_set"])
+        seed_artists = set(seed_rows["artist_lower"])
+
+        selected_weights = dict(self.SCORING_PRESETS["balanced"])
+        if weights:
+            unknown = set(weights) - set(selected_weights)
+            if unknown:
+                raise ValueError(f"Unknown scoring weights: {sorted(unknown)}")
+            selected_weights.update(weights)
+        total_weight = sum(selected_weights.values())
+        if total_weight <= 0:
+            raise ValueError("At least one scoring weight must be positive")
+        selected_weights = {key: value / total_weight for key, value in selected_weights.items()}
+
+        distances = np.sqrt(np.sum((self.audio_matrix - seed_vector) ** 2, axis=1))
+        audio_sims = np.clip(1.0 - distances / np.sqrt(len(self.AUDIO_FEATURES)), 0, 1)
+
+        def base_genres(genre_set):
+            result = set()
+            for genre in genre_set:
+                label = genre.lower().strip()
+                if label in self.BASE_GENRE_MAP:
+                    result.add(self.BASE_GENRE_MAP[label])
+                    continue
+                for subgenre, parent in self.BASE_GENRE_MAP.items():
+                    if subgenre in label or label in subgenre:
+                        result.add(parent)
+                        break
+            return result
+
+        seed_base_genres = base_genres(seed_genres)
+        genre_sims = np.zeros(len(self.df), dtype=np.float64)
+        for i, candidate_genres in enumerate(self.df["genre_set"]):
+            candidate_base = base_genres(candidate_genres)
+            if seed_base_genres & candidate_base:
+                genre_sims[i] = min(1.0, 1.0 + min(len(seed_genres & candidate_genres) * 0.1, 0.2))
+
+        artist_values = self.df["artist_lower"].values
+        artist_sims = np.isin(artist_values, list(seed_artists)).astype(np.float64)
+        for i, artist in enumerate(artist_values):
+            if artist_sims[i] == 0 and any(seed in str(artist) or str(artist) in seed for seed in seed_artists):
+                artist_sims[i] = 0.5
+
+        pop_scores = (
+            self.df["norm_track_popularity"].values.astype(np.float64) * 0.75 +
+            self.df["norm_artist_popularity"].values.astype(np.float64) * 0.25
+        )
+        contributions = {
+            "audio": selected_weights["audio"] * audio_sims,
+            "popularity": selected_weights["popularity"] * pop_scores,
+            "genre": selected_weights["genre"] * genre_sims,
+            "artist": selected_weights["artist"] * artist_sims,
+        }
+        final_scores = sum(contributions.values())
+
+        def normalized_title(title):
+            title = str(title).lower().strip()
+            title = re.sub(r'\s*[\(\[].*?[\)\]]', '', title)
+            return re.sub(r'\s*-\s*(remix|remaster|radio edit|live|deluxe|bonus).*', '', title, flags=re.I).strip()
+
+        seed_keys = {
+            f"{normalized_title(row['resolved_name'])} || {row['artist_lower']}"
+            for _, row in seed_rows.iterrows()
+        }
+        seen_keys = set(seed_keys)
         artist_counts = {}
         results = []
 
-        for idx in ranked_indices:
-            idx = int(idx)
-            row = self.df.iloc[idx]
-            track_name = str(row["resolved_name"])
-            track_artist = str(row["resolved_artist"])
-            track_artist_lower = str(row["artist_lower"])
-
-            nt = norm_title(track_name)
-
-            # Skip seed track
-            if nt == seed_norm_title and track_artist_lower == seed_artist:
-                continue
-
-            # Deduplicate by normalized title
-            if nt in seen_titles:
-                continue
-            seen_titles.add(nt)
-
-            # Limit per artist
-            if max_per_artist > 0:
-                count = artist_counts.get(track_artist_lower, 0)
-                if count >= max_per_artist:
-                    continue
-                artist_counts[track_artist_lower] = count + 1
-
-            score = float(final_scores[idx])
-            album = str(row.get("album_name", ""))
-
-            # Build explanation
-            explanations = []
-            if audio_sims[idx] > 0.01:
-                explanations.append(f"Audio similarity: {audio_sims[idx]:.2f}")
-            if genre_sims[idx] > 0.01:
-                explanations.append(f"Genre overlap: {genre_sims[idx]:.2f}")
-            if artist_sims[idx] > 0.01:
-                explanations.append(f"Artist match: {artist_sims[idx]:.1f}")
-            explanations.append(f"Popularity: {pop_scores[idx]:.2f}")
-            if year_sims[idx] > 0.01:
-                explanations.append(f"Era match: {year_sims[idx]:.2f}")
-
+        def add_result(index, discovery=False):
+            row = self.df.iloc[int(index)]
+            artist = str(row["artist_lower"])
+            key = f"{normalized_title(row['resolved_name'])} || {artist}"
+            if key in seen_keys:
+                return False
+            if max_per_artist > 0 and artist != "unknown artist" and artist_counts.get(artist, 0) >= max_per_artist:
+                return False
+            seen_keys.add(key)
+            if artist != "unknown artist":
+                artist_counts[artist] = artist_counts.get(artist, 0) + 1
+            breakdown = {name: float(values[int(index)]) for name, values in contributions.items()}
+            explanation = (
+                f"Audio {audio_sims[int(index)]:.2f} ({breakdown['audio']:.2f}); "
+                f"Popularity {pop_scores[int(index)]:.2f} ({breakdown['popularity']:.2f}); "
+                f"Genre {genre_sims[int(index)]:.2f} ({breakdown['genre']:.2f}); "
+                f"Artist {artist_sims[int(index)]:.2f} ({breakdown['artist']:.2f})"
+            )
+            if discovery:
+                explanation = "Discovery pick — " + explanation
             results.append({
-                "name": track_name,
-                "artist": track_artist,
-                "album": album,
-                "score": score,
-                "explanation": "; ".join(explanations),
-                "audio_sim": float(audio_sims[idx]),
-                "genre_sim": float(genre_sims[idx]),
-                "artist_sim": float(artist_sims[idx]),
-                "pop_score": float(pop_scores[idx]),
-                "year_sim": float(year_sims[idx]),
+                "name": str(row["resolved_name"]), "artist": str(row["resolved_artist"]),
+                "album": str(row.get("album_name", "")), "score": float(final_scores[int(index)]),
+                "explanation": explanation, "audio_sim": float(audio_sims[int(index)]),
+                "genre_sim": float(genre_sims[int(index)]), "artist_sim": float(artist_sims[int(index)]),
+                "pop_score": float(pop_scores[int(index)]), "contributions": breakdown,
+                "discovery": discovery,
             })
+            return True
 
+        discovery_count = min(k, max(0, round(k * discovery_ratio)))
+        for index in np.argsort(-final_scores):
+            if len(results) >= k - discovery_count:
+                break
+            add_result(index)
+
+        if discovery_count:
+            exploration_scores = audio_sims * 0.75 + pop_scores * 0.25
+            for index in np.argsort(-exploration_scores):
+                if genre_sims[int(index)] == 0 and artist_sims[int(index)] == 0 and add_result(index, discovery=True):
+                    if len(results) >= k:
+                        break
+
+        for index in np.argsort(-final_scores):
             if len(results) >= k:
                 break
-
+            add_result(index)
         return results
-
