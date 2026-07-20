@@ -8,13 +8,19 @@ Demonstrates:
 """
 
 import os
+import sys
+
+# Support running directly as a script (python3 src/main.py) or as a module (python3 -m src.main)
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from src.recommender import (
     Song,
     UserProfile,
     Recommender,
     load_songs,
     recommend_songs,
-    score_parquet_tracks
+    score_parquet_tracks,
+    ProductionRecommender
 )
 
 
@@ -23,7 +29,16 @@ def print_recommendations(title: str, recommendations: list) -> None:
     print(f"🎵 {title}")
     print(f"==========================================")
     for i, rec in enumerate(recommendations, 1):
-        if len(rec) == 3:
+        if isinstance(rec, dict):
+            # Dict output from ProductionRecommender
+            name = rec.get("name", "Unknown")
+            artist = rec.get("artist", "Unknown")
+            score = rec.get("score", 0.0)
+            explanation = rec.get("explanation", "")
+            print(f"{i}. {name} — {artist} (Score: {score:.2f})")
+            print(f"   Reason: {explanation}")
+        elif len(rec) == 3:
+            # Tuple output from recommend_songs
             song, score, explanation = rec
             s_title = song.title if isinstance(song, Song) else song.get('title', song.get('name', ''))
             s_artist = song.artist if isinstance(song, Song) else song.get('artist', song.get('track_artists', ''))
@@ -59,19 +74,12 @@ def main() -> None:
         likes_acoustic=True
     )
 
-    rock_recs = recommender.recommend(intense_rock_profile, k=3)
-    rock_formatted = [
-        (s, score_song_expl[0], score_song_expl[1]) 
-        for s in rock_recs 
-        for score_song_expl in [ (recommender.explain_recommendation(intense_rock_profile, s).split(" -> ")[0].replace("Score ", ""), recommender.explain_recommendation(intense_rock_profile, s)) ]
-    ]
-    
     # Simple recommendation output via functional interface
     rock_recs_func = recommend_songs(intense_rock_profile, song_objects, k=3)
-    print_recommendations("User Taste Profile 1: Intense Rock", rock_recs_func)
+    print_recommendations("User Taste Profile 1: Intense Rock (Small Dataset)", rock_recs_func)
 
     lofi_recs_func = recommend_songs(chill_lofi_profile, song_objects, k=3)
-    print_recommendations("User Taste Profile 2: Chill Lofi", lofi_recs_func)
+    print_recommendations("User Taste Profile 2: Chill Lofi (Small Dataset)", lofi_recs_func)
 
     # -------------------------------------------------------------
     # 2. Seed-Song / Track Radio Mode (Single and Multi-Song Seed)
@@ -82,20 +90,42 @@ def main() -> None:
 
         print(f"🎧 Generating Track Radio from seed track: '{seed_track_1.title}' ({seed_track_1.genre}, {seed_track_1.mood})")
         single_seed_recs = recommender.recommend_from_seed([seed_track_1], k=3)
-        print_recommendations("Single-Song Seed Recommendations (Track Radio)", single_seed_recs)
+        print_recommendations("Single-Song Seed Recommendations (Track Radio - Small Dataset)", single_seed_recs)
 
         print(f"🎧 Generating Multi-Song Radio from seeds: '{seed_track_1.title}' + '{seed_track_2.title}'")
         multi_seed_recs = recommender.recommend_from_seed([seed_track_1, seed_track_2], k=3)
-        print_recommendations("Multi-Song Seed Recommendations (Playlist Radio)", multi_seed_recs)
+        print_recommendations("Multi-Song Seed Recommendations (Playlist Radio - Small Dataset)", multi_seed_recs)
 
     # -------------------------------------------------------------
-    # 3. Scaled Parquet Evaluation (docs/tracks.parquet - 1M+ dataset)
+    # 3. Parquet Evaluation (docs/tracks.parquet - 1M+ dataset)
     # -------------------------------------------------------------
     parquet_path = "docs/tracks.parquet"
-    if os.path.exists(parquet_path):
-        print("\n🚀 Testing Production-Scale Recommender Engine on `docs/tracks.parquet`...")
-        parquet_recs = score_parquet_tracks(parquet_path, intense_rock_profile, k=3)
-        print_recommendations("Top 3 Recommendations from 1M+ Tracks Parquet Dataset", parquet_recs)
+    # Also support checking if parts exist
+    parts_exist = os.path.exists(os.path.join(os.path.dirname(parquet_path), "tracks_part1.parquet")) and \
+                  os.path.exists(os.path.join(os.path.dirname(parquet_path), "tracks_part2.parquet"))
+
+    if os.path.exists(parquet_path) or parts_exist:
+        print("\n🚀 Testing Recommender Engine on Production Parquet Dataset...")
+        
+        # A. Taste Profile 1: Intense Rock (Parquet)
+        parquet_rock = score_parquet_tracks(parquet_path, intense_rock_profile, k=3)
+        print_recommendations("User Taste Profile 1: Intense Rock (Parquet Dataset)", parquet_rock)
+
+        # B. Taste Profile 2: Chill Lofi (Parquet)
+        parquet_lofi = score_parquet_tracks(parquet_path, chill_lofi_profile, k=3)
+        print_recommendations("User Taste Profile 2: Chill Lofi (Parquet Dataset)", parquet_lofi)
+
+        # C. Production Track Radio (Parquet)
+        print("Loading ProductionRecommender for search and track radio...")
+        prod_recommender = ProductionRecommender(parquet_path)
+        
+        # Search for a seed track in production
+        seed_search = prod_recommender.fuzzy_search_songs("Midnight Coding", limit=1)
+        if seed_search:
+            seed_dict = seed_search[0]
+            print(f"🎧 Generating Track Radio on Parquet for seed: '{seed_dict['name']}' by {seed_dict['artist']}")
+            parquet_track_radio = prod_recommender.recommend(seed_dict["catalog_idx"], k=3)
+            print_recommendations("Single-Song Seed Recommendations (Track Radio - Parquet Dataset)", parquet_track_radio)
 
 
 if __name__ == "__main__":

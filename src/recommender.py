@@ -8,7 +8,7 @@ from collections import Counter
 class Song:
     """
     Represents a song and its attributes.
-    Required by tests/test_recommender.py
+    Required by tests/test_recommender.py aswell as interactive_recommender.py
     """
     id: int
     title: str
