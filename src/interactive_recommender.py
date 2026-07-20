@@ -5,7 +5,7 @@ Interactive Music Recommender CLI
  recommendation engine with fuzzy search on 899K+ tracks.
 
 Usage:
-    python3 tests/interactive_recommender.py
+    python3 src/interactive_recommender.py
 
 Features:
     - Fuzzy search (handles misspellings like "blidning ligths" → "Blinding Lights")
@@ -118,12 +118,12 @@ def get_user_input(prompt):
 
 
 def get_recommendation_settings():
-    """Collect an optional ranking mode and discovery setting from the user."""
-    mode = get_user_input("Mode: balanced, similar, popular, or diverse [balanced]: ").strip().lower() or "balanced"
+    """Collect the requested ranking mode from the user."""
+    mode = get_user_input("Mode: similar or popular [similar]: ").strip().lower() or "similar"
     if mode not in ProductionRecommender.SCORING_PRESETS:
-        print(f"  {styled('Unknown mode; using balanced.', Colors.YELLOW)}")
-        mode = "balanced"
-    return mode, 0.2 if mode == "diverse" else 0.0
+        print(f"  {styled('Unknown mode; using similar.', Colors.YELLOW)}")
+        mode = "similar"
+    return mode
 
 
 # ─── Search Logic ────────────────────────────────────────────────────────────
@@ -135,25 +135,22 @@ def classify_query(recommender, query):
     """
     query_lower = query.strip().lower()
 
-    # 1. Exact artist match check (e.g. "post malone", "the weeknd", "coldplay", "drake")
+    # 1. Song search gets first priority for an exact title. This avoids treating
+    # a song title such as "Blinding Lights" as an artist merely because a
+    # different catalog artist happens to use that name.
+    song_matches = recommender.fuzzy_search_songs(query, limit=20)
+    has_exact_title = any(match["name"].lower() == query_lower for match in song_matches)
+    if has_exact_title:
+        return ("song", song_matches)
+
+    # 2. Exact artist match (e.g. "the weeknd", "coldplay", "drake")
     exact_artists = [a for a in recommender._unique_artists if a.lower() == query_lower]
     if exact_artists:
         return ("artist", exact_artists[0])
 
-    # 2. Song search
-    song_matches = recommender.fuzzy_search_songs(query, limit=20)
-
-    # 3. Check if song match contains an exact/near-exact song title match with pop > 0.50
-    has_exact_song = False
-    if song_matches:
-        top_song = song_matches[0]
-        title_lower = top_song["name"].lower()
-        if (query_lower in title_lower or title_lower in query_lower) and top_song["popularity"] >= 0.50:
-            has_exact_song = True
-
-    # 4. Partial artist match check (only if query didn't return a strong popular song match)
+    # 3. Partial artist match only takes precedence when there is no direct title.
     artist_matches = recommender.fuzzy_search_artists(query, limit=5)
-    if artist_matches and not has_exact_song:
+    if artist_matches:
         top_artist = artist_matches[0]
         if query_lower in top_artist.lower():
             tracks = recommender.get_artist_tracks(top_artist, limit=5)
@@ -167,6 +164,39 @@ def classify_query(recommender, query):
         return ("artist", artist_matches[0])
 
     return ("none", [])
+
+
+def choose_playlist_seed(recommender):
+    """Search for and select one additional playlist-radio seed track."""
+    while True:
+        query = get_user_input("Add a seed: search by song or artist (Enter when done): ").strip()
+        if not query:
+            return None
+
+        query_type, result = classify_query(recommender, query)
+        if query_type == "none":
+            print(f"  {styled('No matches found. Try another search.', Colors.RED)}")
+            continue
+
+        if query_type == "artist":
+            options = recommender.get_artist_tracks(result, limit=15)
+            title = f"Top {len(options)} tracks by {result}"
+        else:
+            options = result
+            title = f"Search results for \"{query}\""
+        if not options:
+            print(f"  {styled('No selectable tracks found.', Colors.RED)}")
+            continue
+
+        print_track_list(options, title=title, show_album=True)
+        selection = get_user_input(f"Select a playlist seed (1-{len(options)}): ").strip()
+        try:
+            index = int(selection) - 1
+            if 0 <= index < len(options):
+                return options[index]
+        except ValueError:
+            pass
+        print(f"  {styled('Invalid selection. Search again or press Enter to finish.', Colors.YELLOW)}")
 
 
 # ─── Main Interactive Loop ───────────────────────────────────────────────────
@@ -209,7 +239,6 @@ def main():
             continue
 
         selected = None
-        selection_options = []
 
         # ─── Artist Mode ─────────────────────────────────────────────
         if query_type == "artist":
@@ -220,7 +249,6 @@ def main():
             if not tracks:
                 print(f"  {styled('No tracks found for this artist in the dataset.', Colors.DIM)}")
                 continue
-            selection_options = tracks
 
             print_track_list(tracks, title=f"Top {len(tracks)} tracks by {artist_name}", show_album=True)
 
@@ -246,7 +274,6 @@ def main():
         # ─── Song Mode ────────────────────────────────────────────────
         elif query_type == "song":
             song_matches = result
-            selection_options = song_matches
 
             if len(song_matches) == 1:
                 # Auto-select if only one match
@@ -276,22 +303,19 @@ def main():
                     continue
 
         # ─── Playlist radio and ranking controls ───────────────────────
-        seed_indices = [selected["catalog_idx"]]
-        if len(selection_options) > 1:
-            additional = get_user_input(
-                "Add playlist seeds from the displayed list (e.g. 2,3; Enter to skip): "
-            ).strip()
-            if additional:
-                try:
-                    for choice in additional.split(","):
-                        candidate = selection_options[int(choice.strip()) - 1]["catalog_idx"]
-                        if candidate not in seed_indices:
-                            seed_indices.append(candidate)
-                except (ValueError, IndexError):
-                    print(f"  {styled('Invalid playlist choices; using the selected track only.', Colors.YELLOW)}")
-                    seed_indices = [selected["catalog_idx"]]
+        seed_tracks = [selected]
+        while True:
+            additional_seed = choose_playlist_seed(recommender)
+            if additional_seed is None:
+                break
+            if additional_seed["catalog_idx"] in {seed["catalog_idx"] for seed in seed_tracks}:
+                print(f"  {styled('That track is already in the playlist.', Colors.YELLOW)}")
+            else:
+                seed_tracks.append(additional_seed)
+                print(f"  {styled('Added:', Colors.GREEN)} {additional_seed['name']} — {additional_seed['artist']}")
+        seed_indices = [seed["catalog_idx"] for seed in seed_tracks]
 
-        mode, discovery_ratio = get_recommendation_settings()
+        mode = get_recommendation_settings()
         seed_rows = recommender.catalog.iloc[seed_indices]
         feature_means = seed_rows[["energy", "danceability", "valence"]].mean()
         genre_set = set().union(*seed_rows["genre_set"])
@@ -311,9 +335,10 @@ def main():
         print(f"\n  {styled('⏳ Computing recommendations...', Colors.DIM)}", flush=True)
 
         recs = recommender.recommend_from_seeds(
-            seed_indices, k=10, max_per_artist=3,
+            seed_indices, k=10, max_per_artist=1 if mode == "popular" else 3,
             weights=ProductionRecommender.SCORING_PRESETS[mode],
-            discovery_ratio=discovery_ratio,
+            exclude_seed_artists=mode == "popular",
+            cap_unknown_artists=mode == "popular",
         )
 
         if not recs:

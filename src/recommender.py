@@ -392,10 +392,10 @@ class ProductionRecommender:
     """
 
     SCORING_PRESETS = {
-        "balanced": {"audio": 0.35, "popularity": 0.35, "genre": 0.15, "artist": 0.15},
-        "similar": {"audio": 0.55, "popularity": 0.15, "genre": 0.20, "artist": 0.10},
-        "popular": {"audio": 0.20, "popularity": 0.55, "genre": 0.15, "artist": 0.10},
-        "diverse": {"audio": 0.45, "popularity": 0.20, "genre": 0.25, "artist": 0.10},
+        # The prior balanced recipe is now named "similar" for a clearer CLI.
+        "similar": {"audio": 0.35, "popularity": 0.35, "genre": 0.15, "artist": 0.15},
+        # Popular mode intentionally excludes seed artists and uses one result per artist.
+        "popular": {"audio": 0.50, "popularity": 0.35, "genre": 0.15, "artist": 0.00},
     }
 
     AUDIO_FEATURES = [
@@ -595,6 +595,7 @@ class ProductionRecommender:
 
         Handles single titles ("Starboy") and title+artist queries ("blinding lights the weeknd").
         """
+        import re
         from rapidfuzz import fuzz, process
 
         query_lower = query.strip().lower()
@@ -605,10 +606,15 @@ class ProductionRecommender:
         exact_mask = (self.catalog["name_lower"] == query_lower) | \
                      self.catalog["name_lower"].str.contains(query_lower, na=False, regex=False)
 
-        # 1b. If no direct title match, try title + artist combo match (for queries like "blinding lights the weeknd")
+        # 1b. If no direct title match, try title + artist combinations in either order.
         if not exact_mask.any():
             combo = self.catalog["name_lower"] + " " + self.catalog["artist_lower"]
             exact_mask = combo.str.contains(query_lower, na=False, regex=False)
+            if not exact_mask.any() and len(query_lower.split()) > 1:
+                # "the weeknd starboy" and "starboy the weeknd" should resolve identically.
+                exact_mask = self._pd.Series(True, index=self.catalog.index)
+                for token in set(re.findall(r"\w+", query_lower)):
+                    exact_mask &= combo.str.contains(rf"\b{re.escape(token)}\b", na=False, regex=True)
 
         if exact_mask.any():
             exact_df = self.catalog[exact_mask].copy()
@@ -771,16 +777,21 @@ class ProductionRecommender:
         return tracks
 
     def recommend(self, seed_catalog_idx: int, k: int = 10, max_per_artist: int = 3,
-                  weights: Dict[str, float] = None, discovery_ratio: float = 0.0) -> List[Dict]:
+                  weights: Dict[str, float] = None,
+                  exclude_seed_artists: bool = False,
+                  cap_unknown_artists: bool = False) -> List[Dict]:
         """Generate recommendations from one selected catalog track."""
         return self.recommend_from_seeds(
             [seed_catalog_idx], k=k, max_per_artist=max_per_artist,
-            weights=weights, discovery_ratio=discovery_ratio,
+            weights=weights,
+            exclude_seed_artists=exclude_seed_artists,
+            cap_unknown_artists=cap_unknown_artists,
         )
 
     def recommend_from_seeds(self, seed_catalog_indices: List[int], k: int = 10,
                              max_per_artist: int = 3, weights: Dict[str, float] = None,
-                             discovery_ratio: float = 0.0) -> List[Dict]:
+                             exclude_seed_artists: bool = False,
+                             cap_unknown_artists: bool = False) -> List[Dict]:
         """Generate playlist radio from one or more catalog tracks.
 
         Seed vectors are averaged into an 8D centroid. Genre and artist affinity
@@ -814,7 +825,7 @@ class ProductionRecommender:
         seed_genres = set().union(*seed_rows["genre_set"])
         seed_artists = set(seed_rows["artist_lower"])
 
-        selected_weights = dict(self.SCORING_PRESETS["balanced"])
+        selected_weights = dict(self.SCORING_PRESETS["similar"])
         if weights:
             unknown = set(weights) - set(selected_weights)
             if unknown:
@@ -879,16 +890,19 @@ class ProductionRecommender:
         artist_counts = {}
         results = []
 
-        def add_result(index, discovery=False):
+        def add_result(index):
             row = self.df.iloc[int(index)]
             artist = str(row["artist_lower"])
             key = f"{normalized_title(row['resolved_name'])} || {artist}"
             if key in seen_keys:
                 return False
-            if max_per_artist > 0 and artist != "unknown artist" and artist_counts.get(artist, 0) >= max_per_artist:
+            if exclude_seed_artists and artist in seed_artists:
+                return False
+            should_cap_artist = artist != "unknown artist" or cap_unknown_artists
+            if max_per_artist > 0 and should_cap_artist and artist_counts.get(artist, 0) >= max_per_artist:
                 return False
             seen_keys.add(key)
-            if artist != "unknown artist":
+            if should_cap_artist:
                 artist_counts[artist] = artist_counts.get(artist, 0) + 1
             breakdown = {name: float(values[int(index)]) for name, values in contributions.items()}
             explanation = (
@@ -897,30 +911,14 @@ class ProductionRecommender:
                 f"Genre {genre_sims[int(index)]:.2f} ({breakdown['genre']:.2f}); "
                 f"Artist {artist_sims[int(index)]:.2f} ({breakdown['artist']:.2f})"
             )
-            if discovery:
-                explanation = "Discovery pick — " + explanation
             results.append({
                 "name": str(row["resolved_name"]), "artist": str(row["resolved_artist"]),
                 "album": str(row.get("album_name", "")), "score": float(final_scores[int(index)]),
                 "explanation": explanation, "audio_sim": float(audio_sims[int(index)]),
                 "genre_sim": float(genre_sims[int(index)]), "artist_sim": float(artist_sims[int(index)]),
                 "pop_score": float(pop_scores[int(index)]), "contributions": breakdown,
-                "discovery": discovery,
             })
             return True
-
-        discovery_count = min(k, max(0, round(k * discovery_ratio)))
-        for index in np.argsort(-final_scores):
-            if len(results) >= k - discovery_count:
-                break
-            add_result(index)
-
-        if discovery_count:
-            exploration_scores = audio_sims * 0.75 + pop_scores * 0.25
-            for index in np.argsort(-exploration_scores):
-                if genre_sims[int(index)] == 0 and artist_sims[int(index)] == 0 and add_result(index, discovery=True):
-                    if len(results) >= k:
-                        break
 
         for index in np.argsort(-final_scores):
             if len(results) >= k:

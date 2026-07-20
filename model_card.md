@@ -13,7 +13,7 @@ This music recommender system is designed to generate personalized song recommen
 * **What it does:** It generates similar song recommendations based on user profiles or seed tracks.
 * **Usage of `UserProfile`:**
   * **Simulation Mode (`src/main.py`):** Uses a `UserProfile` object representing target tastes (favorite genre, mood, target energy, acoustic preference) to rank and score the music catalog.
-  * **Interactive CLI Mode (`tests/interactive_recommender.py`):** Supports one or more displayed seed tracks. It averages their 8D audio vectors into a playlist centroid and scores the full catalog.
+  * **Interactive CLI Mode (`src/interactive_recommender.py`):** Supports one or more displayed seed tracks. It averages their 8D audio vectors into a playlist centroid and scores the full catalog.
 * **Target Audience:** Designed for developers and users who want to find highly relevant pop, rock, and alternative hits. It is fully prototype-ready and can be deployed to production with minor upgrades (such as microservice deployment and API integrations).
 * **Assumptions about the User:** Assumes that the user's immediate listening taste can be represented mathematically as a combination of categorical properties (genre, artist, mood) and continuous audio centroids.
 
@@ -37,7 +37,7 @@ The system compares song attributes using a multi-signal composite score:
   * *Artist Affinity (15%):* Boosts tracks by the same artist.
 * **Changes from Starter Logic:** Upgraded from a simple 3-feature point counter to a high-performance, vectorized 12-feature pipeline using NumPy. It includes subgenre parent mapping, hybrid track popularity priority, and per-artist capping.
 
-* **Recommendation Controls:** `balanced` uses the documented default weights; `similar` emphasizes audio proximity; `popular` emphasizes hybrid popularity; and `diverse` reserves 20% of results for high-audio-similarity tracks outside the seed artist and base genre. Each result includes the weighted contribution of every active signal.
+* **Recommendation Controls:** `similar` uses the documented default weights. `popular` prioritizes popularity while retaining strong audio and genre matching, excludes the seed artists, and returns at most one recommendation per artist. Each result includes the weighted contribution of every active signal.
 
 ---
 
@@ -69,7 +69,7 @@ The system compares song attributes using a multi-signal composite score:
 
 We evaluated both the local rule-based simulation and the interactive CLI engine on the 899,224-track Parquet dataset:
 
-### 1. Parquet Verification on "Starboy" by The Weeknd (`tests/interactive_recommender.py`)
+### 1. Parquet Verification on "Starboy" by The Weeknd (`src/interactive_recommender.py`)
 
 ```text
   🎧 Recommendations based on "Starboy" by The Weeknd

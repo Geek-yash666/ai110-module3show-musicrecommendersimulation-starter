@@ -7,7 +7,7 @@ I requested the AI agent to implement three advanced stretch features:
 
 1. **Challenge 1 (Advanced Song Features):** Introduce at least 5 complex musical attributes (valence, danceability, acousticness, speechiness, liveness, and instrumentalness) to our CSV and parquet loader, updating the point-based algorithm and vector-based scoring models in `src/recommender.py`.
 2. **Challenge 3 (Diversity and Fairness Logic):** Implement a diversity and deduplication filter that restricts recommendations to a maximum of 2–3 songs per artist and strips duplicate album editions of the same song title.
-3. **Challenge 4 (Visual CLI Table):** Develop a beautiful, colored interactive terminal layout (`tests/interactive_recommender.py`) utilizing ANSI color codes, boxes, clean percentages, and detailed text tables to display top recommendations and explain their scores.
+3. **Challenge 4 (Visual CLI Table):** Develop a beautiful, colored interactive terminal layout (`src/interactive_recommender.py`) utilizing ANSI color codes, boxes, clean percentages, and detailed text tables to display top recommendations and explain their scores.
 
 **Prompts used:**
 
@@ -23,7 +23,7 @@ I requested the AI agent to implement three advanced stretch features:
   * Updated `Song` and `UserProfile` to handle 8D audio features.
   * Added `load_songs` support for parsing valence, danceability, acousticness, and popularity.
   * Implemented an artist-capping diversity filter (`max_per_artist=2`) in `recommend_songs` and `recommend`.
-* **`tests/interactive_recommender.py`**:
+* **`src/interactive_recommender.py`**:
   * Generated a fully interactive console loop with custom search query classification, colored ANSI tables, and process delay animations.
 * **`data/songs.csv`**:
   * Added valence, danceability, acousticness, and popularity attributes by utilizing whole new dataset tracks.parquet which contains 1m+ songs.

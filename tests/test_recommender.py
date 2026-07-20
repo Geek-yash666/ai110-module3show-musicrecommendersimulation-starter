@@ -187,20 +187,15 @@ def test_production_playlist_radio_and_unknown_artist_cap():
     assert set(results[0]["contributions"]) == {"audio", "popularity", "genre", "artist"}
 
 
-def test_production_diverse_mode_includes_discovery_pick():
-    engine = make_production_recommender()
-    results = engine.recommend_from_seeds([catalog_index(engine, "Seed A")], k=3, discovery_ratio=0.34)
-
-    assert any(rec["discovery"] for rec in results)
-
-
 def test_production_search_handles_exact_and_fuzzy_queries():
     engine = make_production_recommender()
 
     exact = engine.fuzzy_search_songs("seed a", limit=1)
+    reversed_combo = engine.fuzzy_search_songs("known artist seed a", limit=1)
     fuzzy = engine.fuzzy_search_songs("unknwon two", limit=1)
 
     assert exact[0]["name"] == "Seed A"
+    assert reversed_combo[0]["name"] == "Seed A"
     assert fuzzy[0]["name"] == "Unknown Two"
 
 
@@ -211,12 +206,17 @@ def test_production_presets_change_ranking_priority():
 
     seed_index = catalog_index(engine, "Seed A")
     similar = engine.recommend(seed_index, k=9, weights=engine.SCORING_PRESETS["similar"])
-    popular = engine.recommend(seed_index, k=9, weights=engine.SCORING_PRESETS["popular"])
+    popular = engine.recommend(
+        seed_index, k=9, max_per_artist=1,
+        weights=engine.SCORING_PRESETS["popular"], exclude_seed_artists=True,
+        cap_unknown_artists=True,
+    )
     similar_names = [rec["name"] for rec in similar]
     popular_names = [rec["name"] for rec in popular]
 
-    assert similar_names.index("Audio Match") < similar_names.index("Pop Hit")
     assert popular_names.index("Pop Hit") < popular_names.index("Audio Match")
+    assert all(rec["artist"] != "Known Artist" for rec in popular)
+    assert len({rec["artist"] for rec in popular}) == len(popular)
 
 
 def test_production_deduplicates_editions_but_keeps_covers():

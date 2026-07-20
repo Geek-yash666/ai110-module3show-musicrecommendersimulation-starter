@@ -51,7 +51,7 @@ $$
 3. **Genre Similarity (15%)**: Maps subgenres (e.g. `canadian pop`, `dance pop`) to base categories (`pop`). Sharing a base category awards full points, with a bonus for exact subgenre overlaps.
 4. **Artist Affinity (15%)**: Boosts tracks by the same artist as the seed.
 
-The interactive CLI also offers `similar`, `popular`, and `diverse` presets. Playlist radio accepts multiple displayed seed tracks, averages their 8D vectors into a centroid, and combines their genre and artist metadata. Diverse mode reserves discovery slots for high-audio-similarity tracks outside the seed artist and base genre.
+The interactive CLI offers `similar` and `popular` presets. Playlist radio accepts multiple searched seed tracks, averages their 8D vectors into a centroid, and combines their genre and artist metadata. Popular mode excludes the seed artists and returns at most one result per artist.
 
 ### **Potential Biases & Risks**
 
@@ -77,7 +77,7 @@ Once scored, candidate tracks are ranked and filtered:
 
 ```mermaid
 flowchart TD
-    A["👤 User Input Query<br>(e.g. 'blinding lights the weeknd', 'starboy')"] --> B{"Query Classifier<br>(tests/interactive_recommender.py)"}
+    A["👤 User Input Query<br>(e.g. 'blinding lights the weeknd', 'starboy')"] --> B{"Query Classifier<br>(src/interactive_recommender.py)"}
   
     B -->|"Exact Major Artist Match<br>(e.g. 'the weeknd', 'post malone')"| C["🎤 Artist Search Path<br>(get_artist_tracks)"]
     B -->|"Song / Combo Query<br>(e.g. 'starboy', 'heat waves')"| D["🎧 Song Search Path<br>(fuzzy_search_songs)"]
@@ -125,7 +125,7 @@ The `src/recommender.py` file is divided into **two distinct architectural track
 * **Design Philosophy:** Vectorized array programming using NumPy and Pandas.
 * **Core Class:** `ProductionRecommender`.
 * **How it Works:** Bypasses individual song objects and loops. It loads all 899,224 songs into a single memory block (Pandas DataFrame and 2D NumPy Matrix) and scores them in parallel using vectorized matrix algebra (Euclidean distance operations).
-* **Use Case:** Primarily used by the interactive CLI engine (`tests/interactive_recommender.py`) to search and generate recommendations over the entire 899K+ Spotify dataset in under **20 milliseconds**.
+* **Use Case:** Primarily used by the interactive CLI engine (`src/interactive_recommender.py`) to search and generate recommendations over the entire 899K+ Spotify dataset in under **20 milliseconds**.
 
 ### **Logical Commonalities vs. Differences**
 
@@ -163,7 +163,7 @@ python3 src/main.py
 4. **Run the Interactive CLI Recommender** (Launches a colored console interface to search by song/artist, select items with fuzzy-spelling tolerance, and generate recommendations):
 
 ```bash
-python3 tests/interactive_recommender.py
+python3 src/interactive_recommender.py
 ```
 
 ### Running Tests
@@ -260,7 +260,7 @@ Loading parquet dataset from docs/tracks.parquet...
 
 ```
 
-### 2. Interactive Search & Recommendation Output (`python3 tests/interactive_recommender.py`)
+### 2. Interactive Search & Recommendation Output (`python3 src/interactive_recommender.py`)
 
 The interactive CLI is the production Parquet entry point. It supports one or more selected seed tracks, ranking presets, and score-contribution explanations.
 
