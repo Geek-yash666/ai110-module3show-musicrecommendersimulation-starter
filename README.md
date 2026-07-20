@@ -107,28 +107,30 @@ You can add more tests in `tests/test_recommender.py`.
 ## Sample Recommendation Output
 
 ```
+Loading songs from data/songs.csv...
 Loaded 10 songs from data/songs.csv.
+
 
 ==========================================
 🎵 User Taste Profile 1: Intense Rock
 ==========================================
-1. Storm Runner — Voltline (Score: 4.54)
-   Reason: Genre match: 'rock' (+2.0); Mood match: 'intense' (+1.0); Energy match: 0.91 vs target 0.85 (+0.94); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
-2. Gym Hero — Max Pulse (Score: 2.52)
-   Reason: Mood match: 'intense' (+1.0); Energy match: 0.93 vs target 0.85 (+0.92); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
-3. Sunrise City — Neon Echo (Score: 1.57)
-   Reason: Energy match: 0.82 vs target 0.85 (+0.97); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+1. Storm Runner — Voltline (Score: 5.00)
+   Reason: Genre match: 'rock' (+2.0); Mood match: 'intense' (+1.0); Energy match: 0.91 vs target 0.85 (+0.94); Acoustic preference match (+0.5); Valence (0.48) & Danceability (0.66) proximity (+0.45); Popularity boost: 50.0/100 (+0.10)
+2. Gym Hero — Max Pulse (Score: 2.86)
+   Reason: Mood match: 'intense' (+1.0); Energy match: 0.93 vs target 0.85 (+0.92); Acoustic preference match (+0.5); Valence (0.77) & Danceability (0.88) proximity (+0.34); Popularity boost: 50.0/100 (+0.10)
+3. Night Drive Loop — Neon Echo (Score: 1.94)
+   Reason: Energy match: 0.75 vs target 0.85 (+0.90); Acoustic preference match (+0.5); Valence (0.49) & Danceability (0.73) proximity (+0.44); Popularity boost: 50.0/100 (+0.10)
 
 
 ==========================================
 🎵 User Taste Profile 2: Chill Lofi
 ==========================================
-1. Library Rain — Paper Lanterns (Score: 4.60)
-   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.35 vs target 0.35 (+1.00); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
-2. Midnight Coding — LoRoom (Score: 4.53)
-   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.42 vs target 0.35 (+0.93); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
-3. Focus Flow — LoRoom (Score: 3.55)
-   Reason: Genre match: 'lofi' (+2.0); Energy match: 0.40 vs target 0.35 (+0.95); Acoustic preference match (+0.5); Popularity boost: 50.0/100 (+0.10)
+1. Library Rain — Paper Lanterns (Score: 5.05)
+   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.35 vs target 0.35 (+1.00); Acoustic preference match (+0.5); Valence (0.60) & Danceability (0.58) proximity (+0.46); Popularity boost: 50.0/100 (+0.10)
+2. Midnight Coding — LoRoom (Score: 4.99)
+   Reason: Genre match: 'lofi' (+2.0); Mood match: 'chill' (+1.0); Energy match: 0.42 vs target 0.35 (+0.93); Acoustic preference match (+0.5); Valence (0.56) & Danceability (0.62) proximity (+0.45); Popularity boost: 50.0/100 (+0.10)
+3. Focus Flow — LoRoom (Score: 4.00)
+   Reason: Genre match: 'lofi' (+2.0); Energy match: 0.40 vs target 0.35 (+0.95); Acoustic preference match (+0.5); Valence (0.59) & Danceability (0.60) proximity (+0.45); Popularity boost: 50.0/100 (+0.10)
 ```
 
 ---
